@@ -1,0 +1,185 @@
+
+## PREVIOUS ATTEMPT FAILED
+
+**Error type**: unknown
+**Error message**:
+```
+  Test 1: ERROR - at 5:14:
+def jacobi_1d_kernel(A, B, N, TSTEPS):
+    BLOCK_SIZE = 128
+
+    # Pre-compute offsets once
+    offsets = tl.arange(0, BLOCK_SIZE)
+              ^
+  Test 2: ERROR - at 5:14:
+def jacobi_1d_kernel(A, B, N, TSTEPS):
+    BLOCK_SIZE = 128
+
+    # Pre-compute offsets once
+    offsets = tl.arange(0, BLOCK_SIZE)
+              ^
+  Test 3: ERROR - at 5:14:
+def jacobi_1d_kernel(A, B, N, TSTEPS):
+    BLOCK_SIZE = 128
+
+    # Pre-compute offsets once
+    offsets = tl.arange(0, BLOCK_SIZE)
+              ^
+Some tests FAILED!
+
+```
+
+Please fix the error.
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def jacobi_1d_kernel(A, B, N, TSTEPS):
+    BLOCK_SIZE = 128
+    
+    # Pre-compute offsets once
+    offsets = tl.arange(0, BLOCK_SIZE)
+    
+    for t in range(TSTEPS):
+        # First loop: B[i] = 0.33333 * (A[i-1] + A[i] + A[i+1])
+        num_blocks = triton.cdiv(N - 2, BLOCK_SIZE)
+        for block_id in range(num_blocks):
+            block_start = 1 + block_id * BLOCK_SIZE
+            current_offsets = block_start + offsets
+            mask = current_offsets < N - 1
+            
+            # Load A values
+            a_left = tl.load(A + current_offsets - 1, mask=mask, other=0.0)
+            a_center = tl.load(A + current_offsets, mask=mask, other=0.0)
+            a_right = tl.load(A + current_offsets + 1, mask=mask, other=0.0)
+            
+            # Compute and store B values
+            b_vals = 0.33333 * (a_left + a_center + a_right)
+            tl.store(B + current_offsets, b_vals, mask=mask)
+        
+        # Second loop: A[i] = 0.33333 * (B[i-1] + B[i] + B[i+1])
+        for block_id in range(num_blocks):
+            block_start = 1 + block_id * BLOCK_SIZE
+            current_offsets = block_start + offsets
+            mask = current_offsets < N - 1
+            
+            # Load B values
+            b_left = tl.load(B + current_offsets - 1, mask=mask, other=0.0)
+            b_center = tl.load(B + current_offsets, mask=mask, other=0.0)
+            b_right = tl.load(B + current_offsets + 1, mask=mask, other=0.0)
+            
+            # Compute and store A values
+            a_vals = 0.33333 * (b_left + b_center + b_right)
+            tl.store(A + current_offsets, a_vals, mask=mask)
+
+def jacobi_1d_triton(A, B, N, TSTEPS):
+    jacobi_1d_kernel[(1,)](A, B, N, TSTEPS)
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define TSTEPS 40
+#define N 120
+
+float A[N];
+float B[N];
+
+void jacobi_1d_kernel() {
+  int t, i;
+#pragma scop
+  for (t = 0; t < TSTEPS; t++)
+    {
+      for (i = 1; i < N - 1; i++)
+	B[i] = 0.33333 * (A[i-1] + A[i] + A[i + 1]);
+      for (i = 1; i < N - 1; i++)
+	A[i] = 0.33333 * (B[i-1] + B[i] + B[i + 1]);
+    }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (t = 0; t < TSTEPS; t++)
+    {
+      for (i = 1; i < N - 1; i++)
+	B[i] = 0.33333 * (A[i-1] + A[i] + A[i + 1]);
+      for (i = 1; i < N - 1; i++)
+	A[i] = 0.33333 * (B[i-1] + B[i] + B[i + 1]);
+    }
+```
+
+
+## Array Information:
+- `A`: read-write
+- `B`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `N` = 120
+- `TSTEPS` = 40
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `jacobi_1d_kernel`
+2. Includes a Python wrapper function named `jacobi_1d_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def jacobi_1d_triton(A, B, N, TSTEPS):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 3 of 5. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

@@ -11,7 +11,7 @@ import torch
 
 try:
     import importlib
-    _mod = importlib.import_module("polybench_results.llm_triton.3mm.attempt2")
+    _mod = importlib.import_module("polybench_results.llm_triton.3mm.attempt6")
     k3mm_triton = _mod.k3mm_triton
 except ImportError as e:
     print(f"Import error: {e}")

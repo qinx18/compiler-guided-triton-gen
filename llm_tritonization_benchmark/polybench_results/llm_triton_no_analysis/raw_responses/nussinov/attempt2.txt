@@ -1,0 +1,235 @@
+
+## PREVIOUS ATTEMPT HAS LOW PERFORMANCE - NEEDS BETTER PARALLELIZATION
+
+Your last attempt is CORRECT but has very low performance (speedup: 0.04933x).
+This indicates the code is NOT properly parallelized for GPU execution.
+
+**CRITICAL ISSUE**: Your kernel is likely running sequentially instead of in parallel.
+
+**Common parallelization mistakes to fix**:
+1. Using `grid=(1,)` with a single thread doing all work — this is SEQUENTIAL on GPU!
+2. Using scalar `tl.load`/`tl.store` in a Python for loop instead of vectorized block operations
+3. NOT using `tl.program_id(0)` to distribute work across GPU blocks
+4. Processing ALL elements in one block instead of splitting across multiple blocks
+
+**CORRECT parallel pattern** (each block handles different elements):
+```python
+@triton.jit
+def kernel(..., BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)                    # Get unique block ID
+    block_start = pid * BLOCK_SIZE            # Each block starts at different offset
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # Each block handles BLOCK_SIZE elements
+    mask = offsets < n_elements
+    # Load, compute, store for THIS block only - NO for loop over all elements!
+```
+
+**For 2D kernels**, parallelize the outer loop dimension:
+```python
+@triton.jit
+def kernel(..., N, BLOCK_SIZE: tl.constexpr):
+    row = tl.program_id(0)  # Each block handles one row
+    col_offsets = tl.arange(0, BLOCK_SIZE)
+    # Process row 'row' with vectorized column access
+```
+
+## LAST ATTEMPT (NEEDS PARALLELIZATION FIX):
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def nussinov_kernel(seq_ptr, table_ptr, N):
+    # This is a sequential algorithm that cannot be effectively parallelized
+    # due to strong data dependencies. We'll process sequentially.
+    
+    # Process the main loops sequentially
+    for i_offset in range(N):
+        i = N - 1 - i_offset
+        for j in range(i + 1, N):
+            # Current table[i][j] position
+            current_idx = i * N + j
+            
+            # Initialize current value
+            current_val = tl.load(table_ptr + current_idx)
+            
+            # if (j-1>=0) table[i][j] = max_score(table[i][j], table[i][j-1]);
+            if j - 1 >= 0:
+                left_idx = i * N + (j - 1)
+                left_val = tl.load(table_ptr + left_idx)
+                current_val = tl.maximum(current_val, left_val)
+            
+            # if (i+1<N) table[i][j] = max_score(table[i][j], table[i+1][j]);
+            if i + 1 < N:
+                down_idx = (i + 1) * N + j
+                down_val = tl.load(table_ptr + down_idx)
+                current_val = tl.maximum(current_val, down_val)
+            
+            # if (j-1>=0 && i+1<N)
+            if j - 1 >= 0 and i + 1 < N:
+                diag_idx = (i + 1) * N + (j - 1)
+                diag_val = tl.load(table_ptr + diag_idx)
+                
+                if i < j - 1:
+                    # Don't allow adjacent elements to bond
+                    seq_i = tl.load(seq_ptr + i)
+                    seq_j = tl.load(seq_ptr + j)
+                    match_val = tl.where((seq_i + seq_j) == 3, 1, 0)
+                    current_val = tl.maximum(current_val, diag_val + match_val)
+                else:
+                    current_val = tl.maximum(current_val, diag_val)
+            
+            # for (k=i+1; k<j; k++)
+            for k in range(i + 1, j):
+                left_k_idx = i * N + k
+                right_k_idx = (k + 1) * N + j
+                left_k_val = tl.load(table_ptr + left_k_idx)
+                right_k_val = tl.load(table_ptr + right_k_idx)
+                current_val = tl.maximum(current_val, left_k_val + right_k_val)
+            
+            # Store the result
+            tl.store(table_ptr + current_idx, current_val)
+
+def nussinov_triton(seq, table, N):
+    # Launch with single thread since this is inherently sequential
+    grid = (1,)
+    
+    nussinov_kernel[grid](
+        seq, table, N
+    )
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define N 180
+
+typedef char base;
+#define match(b1, b2) (((b1)+(b2)) == 3 ? 1 : 0)
+#define max_score(s1, s2) ((s1 >= s2) ? s1 : s2)
+
+int seq[N];
+int table[N][N];
+
+
+void nussinov_kernel() {
+  int i, j, k;
+#pragma scop
+ for (i = N-1; i >= 0; i--) {
+  for (j=i+1; j<N; j++) {
+
+   if (j-1>=0)
+      table[i][j] = max_score(table[i][j], table[i][j-1]);
+   if (i+1<N)
+      table[i][j] = max_score(table[i][j], table[i+1][j]);
+
+   if (j-1>=0 && i+1<N) {
+     /* don't allow adjacent elements to bond */
+     if (i<j-1)
+        table[i][j] = max_score(table[i][j], table[i+1][j-1]+match(seq[i], seq[j]));
+     else
+        table[i][j] = max_score(table[i][j], table[i+1][j-1]);
+   }
+
+   for (k=i+1; k<j; k++) {
+      table[i][j] = max_score(table[i][j], table[i][k] + table[k+1][j]);
+   }
+  }
+ }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (i = N-1; i >= 0; i--) {
+  for (j=i+1; j<N; j++) {
+
+   if (j-1>=0)
+      table[i][j] = max_score(table[i][j], table[i][j-1]);
+   if (i+1<N)
+      table[i][j] = max_score(table[i][j], table[i+1][j]);
+
+   if (j-1>=0 && i+1<N) {
+     /* don't allow adjacent elements to bond */
+     if (i<j-1)
+        table[i][j] = max_score(table[i][j], table[i+1][j-1]+match(seq[i], seq[j]));
+     else
+        table[i][j] = max_score(table[i][j], table[i+1][j-1]);
+   }
+
+   for (k=i+1; k<j; k++) {
+      table[i][j] = max_score(table[i][j], table[i][k] + table[k+1][j]);
+   }
+  }
+ }
+```
+
+
+## Array Information:
+- `seq`: read-only
+- `table`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `N` = 180
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `nussinov_kernel`
+2. Includes a Python wrapper function named `nussinov_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def nussinov_triton(seq, table, N):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 2 of 10. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

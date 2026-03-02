@@ -1,110 +1,67 @@
 
-## PREVIOUS ATTEMPT FAILED
+## PREVIOUS ATTEMPT HAS LOW PERFORMANCE - NEEDS BETTER PARALLELIZATION
 
-**Error type**: unknown
-**Error message**:
-```
-  Test 1: ERROR - at 7:16:
-def trisolv_kernel(L_ptr, b_ptr, x_ptr, N, L_stride0):
-    # This is a triangular solver - inherently sequential
-    # We'll process one row at a time in a single thread block
+Your last attempt is CORRECT but has very low performance (speedup: 0.075233x).
+This indicates the code is NOT properly parallelized for GPU execution.
 
-    # Define offsets once at the start
-    BLOCK_SIZE = 32
-    j_offsets = tl.arange(0, BLOCK_SIZE)
-                ^
-  Test 2: ERROR - at 7:16:
-def trisolv_kernel(L_ptr, b_ptr, x_ptr, N, L_stride0):
-    # This is a triangular solver - inherently sequential
-    # We'll process one row at a time in a single thread block
+**CRITICAL ISSUE**: Your kernel is likely running sequentially instead of in parallel.
 
-    # Define offsets once at the start
-    BLOCK_SIZE = 32
-    j_offsets = tl.arange(0, BLOCK_SIZE)
-                ^
-  Test 3: ERROR - at 7:16:
-def trisolv_kernel(L_ptr, b_ptr, x_ptr, N, L_stride0):
-    # This is a triangular solver - inherently sequential
-    # We'll process one row at a time in a single thread block
+**Common parallelization mistakes to fix**:
+1. Using `grid=(1,)` with a single thread doing all work — this is SEQUENTIAL on GPU!
+2. Using scalar `tl.load`/`tl.store` in a Python for loop instead of vectorized block operations
+3. NOT using `tl.program_id(0)` to distribute work across GPU blocks
+4. Processing ALL elements in one block instead of splitting across multiple blocks
 
-    # Define offsets once at the start
-    BLOCK_SIZE = 32
-    j_offsets = tl.arange(0, BLOCK_SIZE)
-                ^
-Some tests FAILED!
-
+**CORRECT parallel pattern** (each block handles different elements):
+```python
+@triton.jit
+def kernel(..., BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)                    # Get unique block ID
+    block_start = pid * BLOCK_SIZE            # Each block starts at different offset
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # Each block handles BLOCK_SIZE elements
+    mask = offsets < n_elements
+    # Load, compute, store for THIS block only - NO for loop over all elements!
 ```
 
-Please fix the error.
+**For 2D kernels**, parallelize the outer loop dimension:
+```python
+@triton.jit
+def kernel(..., N, BLOCK_SIZE: tl.constexpr):
+    row = tl.program_id(0)  # Each block handles one row
+    col_offsets = tl.arange(0, BLOCK_SIZE)
+    # Process row 'row' with vectorized column access
+```
 
-## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+## LAST ATTEMPT (NEEDS PARALLELIZATION FIX):
 ```python
 import triton
 import triton.language as tl
 import torch
 
 @triton.jit
-def trisolv_kernel(L_ptr, b_ptr, x_ptr, N, L_stride0):
-    # This is a triangular solver - inherently sequential
-    # We'll process one row at a time in a single thread block
+def trisolv_kernel(L_ptr, b_ptr, x_ptr, N, L_stride, i):
+    # x[i] = b[i]
+    b_val = tl.load(b_ptr + i)
+    x_val = b_val
     
-    # Define offsets once at the start
-    BLOCK_SIZE = 32
-    j_offsets = tl.arange(0, BLOCK_SIZE)
+    # for (j = 0; j < i; j++)
+    #   x[i] -= L[i][j] * x[j];
+    for j in range(i):
+        L_ij = tl.load(L_ptr + i * L_stride + j)
+        x_j = tl.load(x_ptr + j)
+        x_val -= L_ij * x_j
     
-    for i in range(N):
-        # Load b[i] into x[i]
-        if tl.program_id(0) == 0:
-            b_val = tl.load(b_ptr + i)
-            tl.store(x_ptr + i, b_val)
-        
-        # Synchronize to ensure x[i] is written before other operations
-        tl.debug_barrier()
-        
-        # Compute the dot product for j < i
-        if i > 0:
-            if tl.program_id(0) == 0:
-                x_val = tl.load(x_ptr + i)
-                
-                # Process in blocks for the inner loop
-                for j_start in range(0, i, BLOCK_SIZE):
-                    current_j = j_start + j_offsets
-                    j_mask = current_j < i
-                    
-                    # Load L[i][j] values
-                    L_indices = i * L_stride0 + current_j
-                    L_vals = tl.load(L_ptr + L_indices, mask=j_mask, other=0.0)
-                    
-                    # Load x[j] values
-                    x_vals = tl.load(x_ptr + current_j, mask=j_mask, other=0.0)
-                    
-                    # Compute partial dot product
-                    products = L_vals * x_vals
-                    partial_sum = tl.sum(products)
-                    x_val = x_val - partial_sum
-                
-                tl.store(x_ptr + i, x_val)
-        
-        # Synchronize before division
-        tl.debug_barrier()
-        
-        # Divide by diagonal element L[i][i]
-        if tl.program_id(0) == 0:
-            x_val = tl.load(x_ptr + i)
-            diag_val = tl.load(L_ptr + i * L_stride0 + i)
-            result = x_val / diag_val
-            tl.store(x_ptr + i, result)
-        
-        # Synchronize before next iteration
-        tl.debug_barrier()
+    # x[i] = x[i] / L[i][i];
+    L_ii = tl.load(L_ptr + i * L_stride + i)
+    x_val = x_val / L_ii
+    
+    tl.store(x_ptr + i, x_val)
 
 def trisolv_triton(L, b, x, N):
-    # Launch with single thread block since this is inherently sequential
-    grid = (1,)
-    
-    trisolv_kernel[grid](
-        L, b, x, N, L.stride(0)
-    )
+    # Sequential execution due to WAR dependencies
+    for i in range(N):
+        grid = (1,)
+        trisolv_kernel[grid](L, b, x, N, L.stride(0), i)
 ```
 
 
@@ -146,6 +103,33 @@ for (i = 0; i < N; i++)
       x[i] = x[i] / L[i][i];
     }
 ```
+
+## WAR (Write-After-Read) Dependencies
+
+**Note**: This kernel has WAR (Write-After-Read) dependencies.
+If you split the computation into **separate Triton kernels** launched sequentially, kernel launch barriers handle these dependencies naturally — no cloning needed.
+Cloning is only needed if reads and writes to the same array happen **within a single kernel**.
+
+**Arrays with WAR dependencies**: x
+- Read x[(j)] may conflict with Write x[(i)] from different iteration
+
+**If using a single kernel**: Create read-only copies before the parallel region:
+```python
+x_copy = x.clone()  # Read from copy, write to original
+```
+**If using separate kernels**: No cloning needed — launch one kernel per phase.
+
+
+## Parallelization Analysis
+
+**Loop dimensions**: ['i', 'j']
+**Triangular bounds**: j < i
+
+- Parallelize `j`, sequential `i`: VALID
+
+- Parallelize `i`, sequential `j`: VALID
+
+**Both `i` and `j` are freely parallelizable.** Use a 2D grid to parallelize both simultaneously for best GPU occupancy.
 
 
 ## Array Information:
@@ -208,5 +192,5 @@ vals = tl.load(ptr + offsets, mask=mask)
 
 Provide ONLY the Python code, no additional explanation.
 
-This is attempt 3 of 5. Please provide a corrected implementation.
+This is attempt 3 of 10. Please provide a corrected implementation.
 Provide ONLY the Python code, no additional explanation.

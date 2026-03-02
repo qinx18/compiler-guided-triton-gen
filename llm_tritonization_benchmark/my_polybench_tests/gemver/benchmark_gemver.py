@@ -10,7 +10,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton.gemver.attempt5 import gemver_triton
+    from polybench_results.llm_triton.gemver.attempt3 import gemver_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

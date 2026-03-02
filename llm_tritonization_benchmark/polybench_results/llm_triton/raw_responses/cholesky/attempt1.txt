@@ -1,5 +1,5 @@
 # LLM-Generated Triton Implementation for cholesky (Polybench)
-# Generated: 2026-02-09 18:46:29
+# Generated: 2026-03-02 03:09:28
 # Model: claude-sonnet-4-20250514
 
 ================================================================================
@@ -54,6 +54,33 @@ for (i = 0; i < N; i++) {
      A[i][i] = sqrtf(A[i][i]);
   }
 ```
+
+## WAR (Write-After-Read) Dependencies
+
+**Note**: This kernel has WAR (Write-After-Read) dependencies.
+If you split the computation into **separate Triton kernels** launched sequentially, kernel launch barriers handle these dependencies naturally — no cloning needed.
+Cloning is only needed if reads and writes to the same array happen **within a single kernel**.
+
+**Arrays with WAR dependencies**: A
+- Read A[(i), (k)] may conflict with Write A[(i), (j)] from different iteration
+- Read A[(j), (k)] may conflict with Write A[(i), (j)] from different iteration
+
+**If using a single kernel**: Create read-only copies before the parallel region:
+```python
+A_copy = A.clone()  # Read from copy, write to original
+```
+**If using separate kernels**: No cloning needed — launch one kernel per phase.
+
+
+## Parallelization Analysis
+
+**Loop dimensions**: ['i', 'j']
+**Triangular bounds**: j < i
+
+- Parallelize `j`, sequential `i`: INVALID
+  - CHAIN DEPENDENCY: read [(j), (k)] differs from write [(i), (j)]. Different j values may have inter-dependencies.
+
+- Parallelize `i`, sequential `j`: VALID
 
 
 ## Array Information:
@@ -123,76 +150,49 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def cholesky_kernel(A_ptr, N, stride_0, stride_1):
-    for i in range(N):
-        # j < i case
-        for j in range(i):
-            # Inner k loop: A[i][j] -= A[i][k] * A[j][k]
-            k_block_size = min(32, j) if j > 0 else 0
-            if k_block_size > 0:
-                k_offsets = tl.arange(0, 32)
-                sum_val = 0.0
-                
-                for k_start in range(0, j, 32):
-                    k_end = min(k_start + 32, j)
-                    current_k_offsets = k_start + k_offsets
-                    mask = current_k_offsets < j
-                    
-                    # Load A[i][k]
-                    a_i_k_ptr = A_ptr + i * stride_0 + current_k_offsets * stride_1
-                    a_i_k = tl.load(a_i_k_ptr, mask=mask, other=0.0)
-                    
-                    # Load A[j][k]
-                    a_j_k_ptr = A_ptr + j * stride_0 + current_k_offsets * stride_1
-                    a_j_k = tl.load(a_j_k_ptr, mask=mask, other=0.0)
-                    
-                    # Accumulate products
-                    products = a_i_k * a_j_k
-                    sum_val += tl.sum(tl.where(mask, products, 0.0))
-                
-                # Update A[i][j]
-                a_i_j_ptr = A_ptr + i * stride_0 + j * stride_1
-                current_val = tl.load(a_i_j_ptr)
-                current_val -= sum_val
-                tl.store(a_i_j_ptr, current_val)
+def cholesky_kernel(A_ptr, N, BLOCK_SIZE: tl.constexpr):
+    # Get the current i value for this block
+    i = tl.program_id(0)
+    
+    # Process j < i
+    for j in range(i):
+        # Compute A[i][j] -= A[i][k] * A[j][k] for k < j
+        for k in range(j):
+            i_k_idx = i * N + k
+            j_k_idx = j * N + k
+            a_i_k = tl.load(A_ptr + i_k_idx)
+            a_j_k = tl.load(A_ptr + j_k_idx)
             
-            # Divide by A[j][j]
-            a_j_j_ptr = A_ptr + j * stride_0 + j * stride_1
-            a_j_j = tl.load(a_j_j_ptr)
-            
-            a_i_j_ptr = A_ptr + i * stride_0 + j * stride_1
-            a_i_j = tl.load(a_i_j_ptr)
-            a_i_j /= a_j_j
-            tl.store(a_i_j_ptr, a_i_j)
+            i_j_idx = i * N + j
+            a_i_j = tl.load(A_ptr + i_j_idx)
+            a_i_j -= a_i_k * a_j_k
+            tl.store(A_ptr + i_j_idx, a_i_j)
         
-        # i == j case
-        sum_val = 0.0
-        if i > 0:
-            k_offsets = tl.arange(0, 32)
-            
-            for k_start in range(0, i, 32):
-                current_k_offsets = k_start + k_offsets
-                mask = current_k_offsets < i
-                
-                # Load A[i][k]
-                a_i_k_ptr = A_ptr + i * stride_0 + current_k_offsets * stride_1
-                a_i_k = tl.load(a_i_k_ptr, mask=mask, other=0.0)
-                
-                # Accumulate squares
-                squares = a_i_k * a_i_k
-                sum_val += tl.sum(tl.where(mask, squares, 0.0))
-        
-        # Update A[i][i]
-        a_i_i_ptr = A_ptr + i * stride_0 + i * stride_1
-        a_i_i = tl.load(a_i_i_ptr)
-        a_i_i -= sum_val
-        a_i_i = tl.sqrt(a_i_i)
-        tl.store(a_i_i_ptr, a_i_i)
+        # A[i][j] /= A[j][j]
+        i_j_idx = i * N + j
+        j_j_idx = j * N + j
+        a_i_j = tl.load(A_ptr + i_j_idx)
+        a_j_j = tl.load(A_ptr + j_j_idx)
+        a_i_j /= a_j_j
+        tl.store(A_ptr + i_j_idx, a_i_j)
+    
+    # Process diagonal case (i == j)
+    i_i_idx = i * N + i
+    a_i_i = tl.load(A_ptr + i_i_idx)
+    
+    for k in range(i):
+        i_k_idx = i * N + k
+        a_i_k = tl.load(A_ptr + i_k_idx)
+        a_i_i -= a_i_k * a_i_k
+    
+    a_i_i = tl.sqrt(a_i_i)
+    tl.store(A_ptr + i_i_idx, a_i_i)
 
 def cholesky_triton(A, N):
-    grid = (1,)
-    cholesky_kernel[grid](
-        A, N,
-        A.stride(0), A.stride(1)
-    )
+    # Launch kernel for each i value sequentially
+    for i in range(N):
+        grid = (1,)
+        cholesky_kernel[grid](
+            A, N, BLOCK_SIZE=32
+        )
 ```

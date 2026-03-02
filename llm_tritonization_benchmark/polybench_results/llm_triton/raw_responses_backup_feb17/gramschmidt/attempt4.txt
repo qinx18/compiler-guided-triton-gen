@@ -1,0 +1,351 @@
+
+## PREVIOUS ATTEMPT FAILED
+
+**Error type**: unknown
+**Error message**:
+```
+  Test 1: ERROR - at 8:13:
+def q_kernel(A_ptr, Q_ptr, r_kk, M, k, A_stride0, A_stride1, Q_stride0, Q_stride1, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    block_start = pid * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < M
+
+    a_vals = tl.load(A_ptr + offsets * A_stride0 + k * A_stride1, mask=mask, other=0.0)
+    q_vals = a_vals / r_kk
+             ^
+IncompatibleTypeErrorImpl('invalid operands of type pointer<fp32> and triton.language.float32')
+  Test 2: ERROR - at 8:13:
+def q_kernel(A_ptr, Q_ptr, r_kk, M, k, A_stride0, A_stride1, Q_stride0, Q_stride1, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    block_start = pid * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < M
+
+    a_vals = tl.load(A_ptr + offsets * A_stride0 + k * A_stride1, mask=mask, other=0.0)
+    q_vals = a_vals / r_kk
+             ^
+IncompatibleTypeErrorImpl('invalid operands of type pointer<fp32> and triton.language.float32')
+  Test 3: ERROR - at 8:13:
+def q_kernel(A_ptr, Q_ptr, r_kk, M, k, A_stride0, A_stride1, Q_stride0, Q_stride1, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    block_start = pid * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < M
+
+    a_vals = tl.load(A_ptr + offsets * A_stride0 + k * A_stride1, mask=mask, other=0.0)
+    q_vals = a_vals / r_kk
+             ^
+IncompatibleTypeErrorImpl('invalid operands of type pointer<fp32> and triton.language.float32')
+Some tests FAILED!
+
+```
+
+Please fix the error.
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def gramschmidt_kernel(A_ptr, Q_ptr, R_ptr, M, N, 
+                      A_stride0, A_stride1, 
+                      Q_stride0, Q_stride1, 
+                      R_stride0, R_stride1,
+                      BLOCK_SIZE: tl.constexpr):
+    
+    # Each block processes multiple rows in parallel
+    pid = tl.program_id(0)
+    block_start = pid * BLOCK_SIZE
+    row_offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    row_mask = row_offsets < M
+    
+    for k in range(N):
+        # Step 1: Compute norm of column k in parallel
+        k_col_ptrs = A_ptr + row_offsets * A_stride0 + k * A_stride1
+        a_vals = tl.load(k_col_ptrs, mask=row_mask, other=0.0)
+        
+        # Each block computes partial sum
+        partial_nrm = tl.sum(a_vals * a_vals)
+        
+        # Reduction across blocks (first block handles final computation)
+        if pid == 0:
+            # This will be handled by host code for proper reduction
+            pass
+        
+        # Barrier to ensure R[k,k] is computed before proceeding
+        # Load R[k,k] after it's been computed by host
+        r_kk_ptr = R_ptr + k * R_stride0 + k * R_stride1
+        r_kk = tl.load(r_kk_ptr)
+        
+        # Step 2: Compute Q[:, k] = A[:, k] / R[k,k] in parallel
+        q_vals = a_vals / r_kk
+        q_col_ptrs = Q_ptr + row_offsets * Q_stride0 + k * Q_stride1
+        tl.store(q_col_ptrs, q_vals, mask=row_mask)
+        
+        # Step 3: Update remaining columns j > k
+        for j in range(k + 1, N):
+            # Load A[:, j] for this block
+            a_j_ptrs = A_ptr + row_offsets * A_stride0 + j * A_stride1
+            a_j_vals = tl.load(a_j_ptrs, mask=row_mask, other=0.0)
+            
+            # Compute partial dot product Q[:, k] · A[:, j]
+            partial_dot = tl.sum(q_vals * a_j_vals)
+            
+            # Host will reduce partial_dot to get R[k,j]
+            # For now, load R[k,j] after host computes it
+            r_kj_ptr = R_ptr + k * R_stride0 + j * R_stride1
+            r_kj = tl.load(r_kj_ptr)
+            
+            # Update A[:, j] = A[:, j] - Q[:, k] * R[k,j]
+            new_a_j_vals = a_j_vals - q_vals * r_kj
+            tl.store(a_j_ptrs, new_a_j_vals, mask=row_mask)
+
+@triton.jit
+def reduction_kernel(input_ptr, output_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    block_start = pid * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < n_elements
+    
+    vals = tl.load(input_ptr + offsets, mask=mask, other=0.0)
+    result = tl.sum(vals)
+    
+    if pid == 0:
+        tl.store(output_ptr, result)
+
+@triton.jit  
+def norm_kernel(A_ptr, temp_ptr, M, k, A_stride0, A_stride1, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    block_start = pid * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < M
+    
+    a_vals = tl.load(A_ptr + offsets * A_stride0 + k * A_stride1, mask=mask, other=0.0)
+    partial_sum = tl.sum(a_vals * a_vals)
+    tl.store(temp_ptr + pid, partial_sum)
+
+@triton.jit
+def q_kernel(A_ptr, Q_ptr, r_kk, M, k, A_stride0, A_stride1, Q_stride0, Q_stride1, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    block_start = pid * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < M
+    
+    a_vals = tl.load(A_ptr + offsets * A_stride0 + k * A_stride1, mask=mask, other=0.0)
+    q_vals = a_vals / r_kk
+    tl.store(Q_ptr + offsets * Q_stride0 + k * Q_stride1, q_vals, mask=mask)
+
+@triton.jit
+def dot_kernel(Q_ptr, A_ptr, temp_ptr, M, k, j, Q_stride0, Q_stride1, A_stride0, A_stride1, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    block_start = pid * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < M
+    
+    q_vals = tl.load(Q_ptr + offsets * Q_stride0 + k * Q_stride1, mask=mask, other=0.0)
+    a_vals = tl.load(A_ptr + offsets * A_stride0 + j * A_stride1, mask=mask, other=0.0)
+    partial_dot = tl.sum(q_vals * a_vals)
+    tl.store(temp_ptr + pid, partial_dot)
+
+@triton.jit
+def update_kernel(A_ptr, Q_ptr, r_kj, M, k, j, A_stride0, A_stride1, Q_stride0, Q_stride1, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    block_start = pid * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < M
+    
+    q_vals = tl.load(Q_ptr + offsets * Q_stride0 + k * Q_stride1, mask=mask, other=0.0)
+    a_vals = tl.load(A_ptr + offsets * A_stride0 + j * A_stride1, mask=mask, other=0.0)
+    new_a_vals = a_vals - q_vals * r_kj
+    tl.store(A_ptr + offsets * A_stride0 + j * A_stride1, new_a_vals, mask=mask)
+
+def gramschmidt_triton(A, Q, R, M, N):
+    assert A.is_contiguous()
+    assert Q.is_contiguous() 
+    assert R.is_contiguous()
+    
+    BLOCK_SIZE = 256
+    num_blocks = triton.cdiv(M, BLOCK_SIZE)
+    grid = (num_blocks,)
+    
+    temp_buffer = torch.zeros(num_blocks, device=A.device, dtype=A.dtype)
+    
+    for k in range(N):
+        # Compute norm of column k
+        norm_kernel[grid](
+            A, temp_buffer, M, k,
+            A.stride(0), A.stride(1),
+            BLOCK_SIZE
+        )
+        nrm_sq = temp_buffer.sum()
+        r_kk = torch.sqrt(nrm_sq)
+        R[k, k] = r_kk
+        
+        # Compute Q[:, k] = A[:, k] / R[k, k]
+        q_kernel[grid](
+            A, Q, r_kk, M, k,
+            A.stride(0), A.stride(1),
+            Q.stride(0), Q.stride(1),
+            BLOCK_SIZE
+        )
+        
+        # Process remaining columns
+        for j in range(k + 1, N):
+            # Compute R[k, j] = Q[:, k] · A[:, j]
+            dot_kernel[grid](
+                Q, A, temp_buffer, M, k, j,
+                Q.stride(0), Q.stride(1),
+                A.stride(0), A.stride(1),
+                BLOCK_SIZE
+            )
+            r_kj = temp_buffer.sum()
+            R[k, j] = r_kj
+            
+            # Update A[:, j] = A[:, j] - Q[:, k] * R[k, j]
+            update_kernel[grid](
+                A, Q, r_kj, M, k, j,
+                A.stride(0), A.stride(1),
+                Q.stride(0), Q.stride(1),
+                BLOCK_SIZE
+            )
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define M 60
+#define N 80
+
+float A[M][N];
+float R[N][N];
+float Q[M][N];
+
+// Local variables from kernel function
+float nrm;
+
+void gramschmidt_kernel() {
+  int i, j, k;
+#pragma scop
+  for (k = 0; k < N; k++)
+    {
+      nrm = 0.0;
+      for (i = 0; i < M; i++)
+        nrm += A[i][k] * A[i][k];
+      R[k][k] = sqrtf(nrm);
+      for (i = 0; i < M; i++)
+        Q[i][k] = A[i][k] / R[k][k];
+      for (j = k + 1; j < N; j++)
+	{
+	  R[k][j] = 0.0;
+	  for (i = 0; i < M; i++)
+	    R[k][j] += Q[i][k] * A[i][j];
+	  for (i = 0; i < M; i++)
+	    A[i][j] = A[i][j] - Q[i][k] * R[k][j];
+	}
+    }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (k = 0; k < N; k++)
+    {
+      nrm = 0.0;
+      for (i = 0; i < M; i++)
+        nrm += A[i][k] * A[i][k];
+      R[k][k] = sqrtf(nrm);
+      for (i = 0; i < M; i++)
+        Q[i][k] = A[i][k] / R[k][k];
+      for (j = k + 1; j < N; j++)
+	{
+	  R[k][j] = 0.0;
+	  for (i = 0; i < M; i++)
+	    R[k][j] += Q[i][k] * A[i][j];
+	  for (i = 0; i < M; i++)
+	    A[i][j] = A[i][j] - Q[i][k] * R[k][j];
+	}
+    }
+```
+
+## Parallelization Analysis
+
+**Loop dimensions**: ['k', 'i']
+
+- Parallelize `i`, sequential `k`: VALID
+
+- Parallelize `k`, sequential `i`: VALID
+
+
+## Array Information:
+- `A`: read-write
+- `Q`: read-write
+- `R`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `M` = 60
+- `N` = 80
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `gramschmidt_kernel`
+2. Includes a Python wrapper function named `gramschmidt_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def gramschmidt_triton(A, Q, R, M, N):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 4 of 10. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

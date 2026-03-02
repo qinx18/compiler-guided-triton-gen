@@ -3,76 +3,73 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def jacobi_2d_kernel(A_ptr, B_ptr, N, TSTEPS, BLOCK_SIZE: tl.constexpr):
-    # Get program ID and calculate block offsets
-    pid = tl.program_id(0)
+def jacobi_2d_kernel(A, B, N, TSTEPS, BLOCK_SIZE_I: tl.constexpr, BLOCK_SIZE_T: tl.constexpr):
+    # Get program IDs
+    pid_i = tl.program_id(0)
+    pid_t = tl.program_id(1)
     
-    # Calculate total interior elements
-    interior_size = (N - 2) * (N - 2)
+    # Calculate base indices
+    base_i = pid_i * BLOCK_SIZE_I
+    base_t = pid_t * BLOCK_SIZE_T
     
-    # Calculate offsets for this block
-    offsets = tl.arange(0, BLOCK_SIZE)
-    element_ids = pid * BLOCK_SIZE + offsets
-    mask = element_ids < interior_size
+    # Create offset arrays once
+    offsets_i = tl.arange(0, BLOCK_SIZE_I)
+    offsets_t = tl.arange(0, BLOCK_SIZE_T)
     
-    # Convert 1D element_ids to 2D coordinates (i, j) in interior region
-    interior_i = element_ids // (N - 2) + 1
-    interior_j = element_ids % (N - 2) + 1
-    
-    # Perform TSTEPS iterations
-    for t in range(TSTEPS):
-        # First loop: update B array
-        # Load A values for stencil computation
-        center_idx = interior_i * N + interior_j
-        left_idx = interior_i * N + (interior_j - 1)
-        right_idx = interior_i * N + (interior_j + 1)
-        up_idx = (interior_i - 1) * N + interior_j
-        down_idx = (interior_i + 1) * N + interior_j
+    # Process time steps in blocks
+    for t_block in range(BLOCK_SIZE_T):
+        t_idx = base_t + t_block
+        t_valid = t_idx < TSTEPS
         
-        a_center = tl.load(A_ptr + center_idx, mask=mask, other=0.0)
-        a_left = tl.load(A_ptr + left_idx, mask=mask, other=0.0)
-        a_right = tl.load(A_ptr + right_idx, mask=mask, other=0.0)
-        a_up = tl.load(A_ptr + up_idx, mask=mask, other=0.0)
-        a_down = tl.load(A_ptr + down_idx, mask=mask, other=0.0)
-        
-        # Compute B[i][j] = 0.2 * (A[i][j] + A[i][j-1] + A[i][j+1] + A[i-1][j] + A[i+1][j])
-        b_new = 0.2 * (a_center + a_left + a_right + a_up + a_down)
-        
-        # Store B values
-        tl.store(B_ptr + center_idx, b_new, mask=mask)
-        
-        # Global memory barrier to ensure all B updates are visible
-        tl.debug_barrier()
-        
-        # Second loop: update A array
-        # Load B values for stencil computation
-        b_center = tl.load(B_ptr + center_idx, mask=mask, other=0.0)
-        b_left = tl.load(B_ptr + left_idx, mask=mask, other=0.0)
-        b_right = tl.load(B_ptr + right_idx, mask=mask, other=0.0)
-        b_up = tl.load(B_ptr + up_idx, mask=mask, other=0.0)
-        b_down = tl.load(B_ptr + down_idx, mask=mask, other=0.0)
-        
-        # Compute A[i][j] = 0.2 * (B[i][j] + B[i][j-1] + B[i][j+1] + B[i-1][j] + B[i+1][j])
-        a_new = 0.2 * (b_center + b_left + b_right + b_up + b_down)
-        
-        # Store A values
-        tl.store(A_ptr + center_idx, a_new, mask=mask)
-        
-        # Global memory barrier to ensure all A updates are visible before next iteration
-        tl.debug_barrier()
+        if t_valid:
+            # First stencil: A -> B
+            for i_block in range(BLOCK_SIZE_I):
+                i_idx = base_i + i_block
+                i_valid = (i_idx >= 1) & (i_idx < N - 1)
+                
+                if i_valid:
+                    for j in range(1, N - 1):
+                        # Load stencil points for A -> B
+                        center = tl.load(A + i_idx * N + j)
+                        left = tl.load(A + i_idx * N + (j - 1))
+                        right = tl.load(A + i_idx * N + (j + 1))
+                        up = tl.load(A + (i_idx - 1) * N + j)
+                        down = tl.load(A + (i_idx + 1) * N + j)
+                        
+                        # Compute and store result
+                        result = 0.2 * (center + left + right + up + down)
+                        tl.store(B + i_idx * N + j, result)
+            
+            # Synchronization barrier
+            tl.debug_barrier()
+            
+            # Second stencil: B -> A
+            for i_block in range(BLOCK_SIZE_I):
+                i_idx = base_i + i_block
+                i_valid = (i_idx >= 1) & (i_idx < N - 1)
+                
+                if i_valid:
+                    for j in range(1, N - 1):
+                        # Load stencil points for B -> A
+                        center = tl.load(B + i_idx * N + j)
+                        left = tl.load(B + i_idx * N + (j - 1))
+                        right = tl.load(B + i_idx * N + (j + 1))
+                        up = tl.load(B + (i_idx - 1) * N + j)
+                        down = tl.load(B + (i_idx + 1) * N + j)
+                        
+                        # Compute and store result
+                        result = 0.2 * (center + left + right + up + down)
+                        tl.store(A + i_idx * N + j, result)
 
 def jacobi_2d_triton(A, B, N, TSTEPS):
-    # Calculate total interior elements
-    interior_size = (N - 2) * (N - 2)
+    BLOCK_SIZE_I = 32
+    BLOCK_SIZE_T = 4
     
-    # Choose block size
-    BLOCK_SIZE = 256
+    grid_i = triton.cdiv(N - 2, BLOCK_SIZE_I)
+    grid_t = triton.cdiv(TSTEPS, BLOCK_SIZE_T)
     
-    # Calculate number of blocks needed
-    num_blocks = triton.cdiv(interior_size, BLOCK_SIZE)
-    
-    # Launch kernel with grid of blocks
-    grid = (num_blocks,)
-    jacobi_2d_kernel[grid](
-        A, B, N, TSTEPS, BLOCK_SIZE
+    jacobi_2d_kernel[(grid_i, grid_t)](
+        A, B, N, TSTEPS,
+        BLOCK_SIZE_I=BLOCK_SIZE_I,
+        BLOCK_SIZE_T=BLOCK_SIZE_T
     )

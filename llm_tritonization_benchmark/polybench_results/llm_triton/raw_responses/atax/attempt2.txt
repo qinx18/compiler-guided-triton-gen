@@ -1,95 +1,152 @@
 
-## PREVIOUS ATTEMPT FAILED - NUMERICAL ERROR
+## PREVIOUS ATTEMPT FAILED
 
-Your last attempt produced incorrect numerical results.
+**Error type**: unknown
+**Error message**:
+```
+  Test 1: ERROR - at 65:53:
 
-**Error type**: Numerical error (values don't match)
-**Max error observed**: 1.815589e+02
+        # Load A[i, :] for current block
+        a_ptrs = A + i * N + n_indices
+        a_vals = tl.load(a_ptrs, mask=mask_n, other=0.0)
 
-Please fix the numerical computation. Common causes:
-- Incorrect loop bounds or indices
-- Wrong array access patterns (row-major vs column-major)
-- Missing or incorrect operations
-- Off-by-one errors
+        # Update y values
+        y_update = a_vals * tmp_val
+
+        # Atomic add to y (multiple blocks may update same elements)
+        for j in range(BLOCK_SIZE_N):
+            if block_start_n + j < N:
+                tl.atomic_add(y + block_start_n + j, y_update[j])
+                                                     ^
+ValueError('Did you forget to add @triton.jit ? (`_builder` argument must be provided outside of JIT functions.)')
+  Test 2: ERROR - at 65:53:
+
+        # Load A[i, :] for current block
+        a_ptrs = A + i * N + n_indices
+        a_vals = tl.load(a_ptrs, mask=mask_n, other=0.0)
+
+        # Update y values
+        y_update = a_vals * tmp_val
+
+        # Atomic add to y (multiple blocks may update same elements)
+        for j in range(BLOCK_SIZE_N):
+            if block_start_n + j < N:
+                tl.atomic_add(y + block_start_n + j, y_update[j])
+                                                     ^
+ValueError('Did you forget to add @triton.jit ? (`_builder` argument must be provided outside of JIT functions.)')
+  Test 3: ERROR - at 65:53:
+
+        # Load A[i, :] for current block
+        a_ptrs = A + i * N + n_indices
+        a_vals = tl.load(a_ptrs, mask=mask_n, other=0.0)
+
+        # Update y values
+        y_update = a_vals * tmp_val
+
+        # Atomic add to y (multiple blocks may update same elements)
+        for j in range(BLOCK_SIZE_N):
+            if block_start_n + j < N:
+                tl.atomic_add(y + block_start_n + j, y_update[j])
+                                                     ^
+ValueError('Did you forget to add @triton.jit ? (`_builder` argument must be provided outside of JIT functions.)')
+Some tests FAILED!
+
+```
+
+Please fix the error.
 
 ## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
 ```python
-import torch
 import triton
 import triton.language as tl
+import torch
 
 @triton.jit
-def atax_kernel(A_ptr, tmp_ptr, x_ptr, y_ptr, M, N, BLOCK_SIZE: tl.constexpr):
-    # Get program ID
-    pid = tl.program_id(0)
+def atax_kernel(A, tmp, x, y, M, N, BLOCK_SIZE_M: tl.constexpr, BLOCK_SIZE_N: tl.constexpr):
+    # Get program IDs
+    pid_m = tl.program_id(0)
+    pid_n = tl.program_id(1)
     
-    # Initialize y to zero
-    if pid == 0:
-        y_offsets = tl.arange(0, BLOCK_SIZE)
-        for y_start in range(0, N, BLOCK_SIZE):
-            y_current_offsets = y_start + y_offsets
-            y_mask = y_current_offsets < N
-            tl.store(y_ptr + y_current_offsets, 0.0, mask=y_mask)
+    # Calculate block offsets
+    block_start_m = pid_m * BLOCK_SIZE_M
+    block_start_n = pid_n * BLOCK_SIZE_N
     
-    # Synchronize to ensure y is initialized
+    # Create offset arrays
+    offsets_m = tl.arange(0, BLOCK_SIZE_M)
+    offsets_n = tl.arange(0, BLOCK_SIZE_N)
+    
+    # Calculate actual indices
+    m_indices = block_start_m + offsets_m
+    n_indices = block_start_n + offsets_n
+    
+    # Create masks
+    mask_m = m_indices < M
+    mask_n = n_indices < N
+    
+    # Initialize y to 0 (only for the first M block)
+    if pid_m == 0:
+        y_vals = tl.zeros((BLOCK_SIZE_N,), dtype=tl.float32)
+        tl.store(y + n_indices, y_vals, mask=mask_n)
+    
+    # Wait for all blocks to finish initialization
     tl.debug_barrier()
     
-    # Each program handles one row of A
-    i = pid
-    if i >= M:
-        return
+    # Process each row i sequentially (cannot parallelize due to tmp dependency)
+    for i in range(M):
+        # Compute tmp[i] = sum(A[i][j] * x[j]) for current block
+        if pid_m == 0:  # Only one block computes tmp
+            # Load A[i, :] for current block
+            a_ptrs = A + i * N + n_indices
+            a_vals = tl.load(a_ptrs, mask=mask_n, other=0.0)
+            
+            # Load x values
+            x_vals = tl.load(x + n_indices, mask=mask_n, other=0.0)
+            
+            # Compute partial sum
+            partial_tmp = tl.sum(a_vals * x_vals)
+            
+            # Atomic add to tmp[i] (in case of multiple blocks processing same row)
+            tl.atomic_add(tmp + i, partial_tmp)
     
-    # Initialize tmp[i] = 0.0
-    tl.store(tmp_ptr + i, 0.0)
-    
-    # Compute tmp[i] = sum(A[i][j] * x[j]) for j in [0, N)
-    tmp_val = 0.0
-    offsets = tl.arange(0, BLOCK_SIZE)
-    
-    for j_start in range(0, N, BLOCK_SIZE):
-        j_offsets = j_start + offsets
-        j_mask = j_offsets < N
-        
-        # Load A[i][j] and x[j]
-        a_indices = i * N + j_offsets
-        a_vals = tl.load(A_ptr + a_indices, mask=j_mask, other=0.0)
-        x_vals = tl.load(x_ptr + j_offsets, mask=j_mask, other=0.0)
-        
-        # Accumulate tmp[i]
-        tmp_val += tl.sum(a_vals * x_vals)
-    
-    # Store tmp[i]
-    tl.store(tmp_ptr + i, tmp_val)
-    
-    # Synchronize to ensure all tmp values are computed
+    # Wait for tmp computation to complete
     tl.debug_barrier()
     
-    # Load tmp[i]
-    tmp_i = tl.load(tmp_ptr + i)
-    
-    # Update y[j] = y[j] + A[i][j] * tmp[i] for j in [0, N)
-    for j_start in range(0, N, BLOCK_SIZE):
-        j_offsets = j_start + offsets
-        j_mask = j_offsets < N
+    # Second phase: update y
+    for i in range(M):
+        # Load tmp[i]
+        tmp_val = tl.load(tmp + i)
         
-        # Load A[i][j]
-        a_indices = i * N + j_offsets
-        a_vals = tl.load(A_ptr + a_indices, mask=j_mask, other=0.0)
+        # Load A[i, :] for current block
+        a_ptrs = A + i * N + n_indices
+        a_vals = tl.load(a_ptrs, mask=mask_n, other=0.0)
         
-        # Load current y[j]
-        y_vals = tl.load(y_ptr + j_offsets, mask=j_mask, other=0.0)
+        # Update y values
+        y_update = a_vals * tmp_val
         
-        # Update y[j]
-        new_y_vals = y_vals + a_vals * tmp_i
-        tl.store(y_ptr + j_offsets, new_y_vals, mask=j_mask)
+        # Atomic add to y (multiple blocks may update same elements)
+        for j in range(BLOCK_SIZE_N):
+            if block_start_n + j < N:
+                tl.atomic_add(y + block_start_n + j, y_update[j])
 
 def atax_triton(A, tmp, x, y, M, N):
-    BLOCK_SIZE = 64
+    # Choose block sizes
+    BLOCK_SIZE_M = min(32, M)
+    BLOCK_SIZE_N = min(64, N)
     
-    # Launch kernel with M programs (one per row of A)
-    grid = (M,)
+    # Calculate grid dimensions
+    grid_m = triton.cdiv(M, BLOCK_SIZE_M)
+    grid_n = triton.cdiv(N, BLOCK_SIZE_N)
     
-    atax_kernel[grid](A, tmp, x, y, M, N, BLOCK_SIZE)
+    # Zero out tmp and y arrays
+    tmp.zero_()
+    y.zero_()
+    
+    # Launch kernel
+    atax_kernel[(grid_m, grid_n)](
+        A, tmp, x, y, M, N,
+        BLOCK_SIZE_M=BLOCK_SIZE_M,
+        BLOCK_SIZE_N=BLOCK_SIZE_N
+    )
 ```
 
 
@@ -139,6 +196,16 @@ for (i = 0; i < N; i++)
 	y[j] = y[j] + A[i][j] * tmp[i];
     }
 ```
+
+## Parallelization Analysis
+
+**Loop dimensions**: ['i', 'j']
+
+- Parallelize `j`, sequential `i`: VALID
+
+- Parallelize `i`, sequential `j`: VALID
+
+**Both `i` and `j` are freely parallelizable.** Use a 2D grid to parallelize both simultaneously for best GPU occupancy.
 
 
 ## Array Information:
@@ -203,5 +270,5 @@ vals = tl.load(ptr + offsets, mask=mask)
 
 Provide ONLY the Python code, no additional explanation.
 
-This is attempt 2 of 5. Please provide a corrected implementation.
+This is attempt 2 of 10. Please provide a corrected implementation.
 Provide ONLY the Python code, no additional explanation.

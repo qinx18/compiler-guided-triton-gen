@@ -1,0 +1,414 @@
+{
+  "2mm": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.375223,
+      "triton_time_ms": 0.123613,
+      "speedup": 3.035467
+    },
+    "final_attempt": 1
+  },
+  "3mm": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=1.780930e+03 rel_error=9.816682e-01",
+      "max_error": "1.780930e+03"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.564487,
+      "triton_time_ms": 0.130526,
+      "speedup": 4.324698
+    },
+    "final_attempt": 2
+  },
+  "adi": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 2.756911,
+      "triton_time_ms": 26.288963,
+      "speedup": 0.10487
+    },
+    "final_attempt": 1
+  },
+  "atax": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 7,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=3.250552e+02 rel_error=9.833179e-01",
+      "max_error": "3.250552e+02"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.123199,
+      "triton_time_ms": 0.090187,
+      "speedup": 1.366041
+    },
+    "final_attempt": 7
+  },
+  "bicg": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.144069,
+      "triton_time_ms": 0.078785,
+      "speedup": 1.828637
+    },
+    "final_attempt": 1
+  },
+  "cholesky": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 3,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 13:16:\n    # Get program ID for j dimension\n    pid_j = tl.program_id(0)\n\n    # Process each row i sequentially\n    for i in range(1, N):\n        # Process columns j < i in blocks\n        for j_start in range(0, i, BLOCK_SIZE):\n            j_end = min(j_start + BLOCK_SIZE, i)\n\n            # Check if this block should process this range\n            if pid_j * BLOCK_SIZE >= j_end:\n                continue\n                ^\nunsupported AST node type: Continue\n  Test 2: ERROR - at 13:16:\n    # Get program ID for j dimension\n    pid_j = tl.program_id(0)\n\n    # Process each row i sequentially\n    for i in range(1, N):\n        # Process columns j < i in blocks\n        for j_start in range(0, i, BLOCK_SIZE):\n            j_end = min(j_start + BLOCK_SIZE, i)\n\n            # Check if this block should process this range\n            if pid_j * BLOCK_SIZE >= j_end:\n                continue\n                ^\nunsupported AST node type: Continue\n  Test 3: ERROR - at 13:16:\n    # Get program ID for j dimension\n    pid_j = tl.program_id(0)\n\n    # Process each row i sequentially\n    for i in range(1, N):\n        # Process columns j < i in blocks\n        for j_start in range(0, i, BLOCK_SIZE):\n            j_end = min(j_start + BLOCK_SIZE, i)\n\n            # Check if this block should process this range\n            if pid_j * BLOCK_SIZE >= j_end:\n                continue\n                ^\nunsupported AST node type: Continue\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.300209,
+      "triton_time_ms": 1.772977,
+      "speedup": 0.169325
+    },
+    "final_attempt": 3
+  },
+  "correlation": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 42:30:\n        for j in range(M):\n            mean_val = tl.load(mean_ptr + j)\n            stddev_sum = 0.0\n\n            for block_start in range(0, N, BLOCK_SIZE):\n                i_offsets = block_start + offsets\n                mask = i_offsets < N\n\n                data_offsets = i_offsets * M + j\n                data_vals = tl.load(data_ptr + data_offsets, mask=mask, other=0.0)\n                diff = data_vals - mean_val\n                stddev_sum += tl.sum(diff * diff, mask=mask)\n                              ^\nTypeError(\"sum() got an unexpected keyword argument 'mask'\")\n  Test 2: ERROR - at 42:30:\n        for j in range(M):\n            mean_val = tl.load(mean_ptr + j)\n            stddev_sum = 0.0\n\n            for block_start in range(0, N, BLOCK_SIZE):\n                i_offsets = block_start + offsets\n                mask = i_offsets < N\n\n                data_offsets = i_offsets * M + j\n                data_vals = tl.load(data_ptr + data_offsets, mask=mask, other=0.0)\n                diff = data_vals - mean_val\n                stddev_sum += tl.sum(diff * diff, mask=mask)\n                              ^\nTypeError(\"sum() got an unexpected keyword argument 'mask'\")\n  Test 3: ERROR - at 42:30:\n        for j in range(M):\n            mean_val = tl.load(mean_ptr + j)\n            stddev_sum = 0.0\n\n            for block_start in range(0, N, BLOCK_SIZE):\n                i_offsets = block_start + offsets\n                mask = i_offsets < N\n\n                data_offsets = i_offsets * M + j\n                data_vals = tl.load(data_ptr + data_offsets, mask=mask, other=0.0)\n                diff = data_vals - mean_val\n                stddev_sum += tl.sum(diff * diff, mask=mask)\n                              ^\nTypeError(\"sum() got an unexpected keyword argument 'mask'\")\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.42759,
+      "triton_time_ms": 2.252179,
+      "speedup": 0.189856
+    },
+    "final_attempt": 2
+  },
+  "covariance": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 4,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=2.466333e-02 rel_error=9.256868e-02",
+      "max_error": "2.466333e-02"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.39078,
+      "triton_time_ms": 2.187994,
+      "speedup": 0.178602
+    },
+    "final_attempt": 4
+  },
+  "deriche": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 9,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - module 'triton.language.math' has no attribute 'pow'\n  Test 2: ERROR - module 'triton.language.math' has no attribute 'pow'\n  Test 3: ERROR - module 'triton.language.math' has no attribute 'pow'\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.601995,
+      "triton_time_ms": 5.114062,
+      "speedup": 0.117714
+    },
+    "final_attempt": 9
+  },
+  "doitgen": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 4,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=2.880966e+01 rel_error=1.042722e+00",
+      "max_error": "2.880966e+01"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.360857,
+      "triton_time_ms": 0.061645,
+      "speedup": 5.853808
+    },
+    "final_attempt": 4
+  },
+  "durbin": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.096085,
+      "triton_time_ms": 0.078942,
+      "speedup": 1.217155
+    },
+    "final_attempt": 1
+  },
+  "fdtd_2d": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 4,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=1.125928e+03 rel_error=1.807133e+02",
+      "max_error": "1.125928e+03"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.337753,
+      "triton_time_ms": 1.231286,
+      "speedup": 0.274309
+    },
+    "final_attempt": 4
+  },
+  "floyd_warshall": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 3,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=7.802298e-01 rel_error=1.389982e-01",
+      "max_error": "7.802298e-01"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 1.002581,
+      "triton_time_ms": 2.791525,
+      "speedup": 0.359152
+    },
+    "final_attempt": 3
+  },
+  "gemm": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.170286,
+      "triton_time_ms": 0.062367,
+      "speedup": 2.730381
+    },
+    "final_attempt": 1
+  },
+  "gemver": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 4,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=3.421655e+03 rel_error=3.688572e-01",
+      "max_error": "3.421655e+03"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.256934,
+      "triton_time_ms": 0.158025,
+      "speedup": 1.625903
+    },
+    "final_attempt": 4
+  },
+  "gesummv": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=4.482087e+01 rel_error=1.020512e+00",
+      "max_error": "4.482087e+01"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.160127,
+      "triton_time_ms": 0.082768,
+      "speedup": 1.934652
+    },
+    "final_attempt": 2
+  },
+  "gramschmidt": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.416908,
+      "triton_time_ms": 1.782401,
+      "speedup": 0.233902
+    },
+    "final_attempt": 1
+  },
+  "heat_3d": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 4.675504,
+      "triton_time_ms": 43.477764,
+      "speedup": 0.107538
+    },
+    "final_attempt": 1
+  },
+  "jacobi_1d": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 6,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=1.327288e+00 rel_error=1.266010e+00",
+      "max_error": "1.327288e+00"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.076506,
+      "triton_time_ms": 0.042829,
+      "speedup": 1.786301
+    },
+    "final_attempt": 6
+  },
+  "jacobi_2d": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=1.203026e+00 rel_error=3.854717e-01",
+      "max_error": "1.203026e+00"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.58185,
+      "triton_time_ms": 0.543242,
+      "speedup": 1.071069
+    },
+    "final_attempt": 2
+  },
+  "lu": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 5,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 20:39:\n\n            # Initialize A[i][j] values for this block\n            valid_js = tl.where(j_mask, current_j_offsets, 0)\n            A_i_j_ptrs = A_ptr + i * N + valid_js\n            A_i_j_vals = tl.load(A_i_j_ptrs, mask=j_mask, other=0.0)\n\n            # Inner loop over k < j\n            for j_idx in range(BLOCK_SIZE):\n                j_val = j_start + j_idx\n                j_valid = (j_val < i) & (j_val >= 0)\n\n                for k in range(j_val * int(j_valid)):\n                                       ^\nTypeError(\"int() argument must be a string, a bytes-like object or a real number, not 'tensor'\")\n  Test 2: ERROR - at 20:39:\n\n            # Initialize A[i][j] values for this block\n            valid_js = tl.where(j_mask, current_j_offsets, 0)\n            A_i_j_ptrs = A_ptr + i * N + valid_js\n            A_i_j_vals = tl.load(A_i_j_ptrs, mask=j_mask, other=0.0)\n\n            # Inner loop over k < j\n            for j_idx in range(BLOCK_SIZE):\n                j_val = j_start + j_idx\n                j_valid = (j_val < i) & (j_val >= 0)\n\n                for k in range(j_val * int(j_valid)):\n                                       ^\nTypeError(\"int() argument must be a string, a bytes-like object or a real number, not 'tensor'\")\n  Test 3: ERROR - at 20:39:\n\n            # Initialize A[i][j] values for this block\n            valid_js = tl.where(j_mask, current_j_offsets, 0)\n            A_i_j_ptrs = A_ptr + i * N + valid_js\n            A_i_j_vals = tl.load(A_i_j_ptrs, mask=j_mask, other=0.0)\n\n            # Inner loop over k < j\n            for j_idx in range(BLOCK_SIZE):\n                j_val = j_start + j_idx\n                j_valid = (j_val < i) & (j_val >= 0)\n\n                for k in range(j_val * int(j_valid)):\n                                       ^\nTypeError(\"int() argument must be a string, a bytes-like object or a real number, not 'tensor'\")\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.502118,
+      "triton_time_ms": 0.163046,
+      "speedup": 3.079613
+    },
+    "final_attempt": 5
+  },
+  "ludcmp": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.548278,
+      "triton_time_ms": 3.882757,
+      "speedup": 0.141208
+    },
+    "final_attempt": 2
+  },
+  "mvt": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.175446,
+      "triton_time_ms": 0.098557,
+      "speedup": 1.780148
+    },
+    "final_attempt": 1
+  },
+  "nussinov": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 3,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 10:4:\ndef nussinov_kernel(seq_ptr, table_ptr, N, BLOCK_SIZE: tl.constexpr):\n    # Since this kernel has complex dependencies that cannot be safely parallelized,\n    # we implement it sequentially with a single thread handling the entire computation\n\n    # Only the first thread does the work\n    if tl.program_id(0) != 0:\n        return\n\n    # Helper functions\n    def match(b1, b2):\n    ^\nnested function definition is not supported.\n  Test 2: ERROR - at 10:4:\ndef nussinov_kernel(seq_ptr, table_ptr, N, BLOCK_SIZE: tl.constexpr):\n    # Since this kernel has complex dependencies that cannot be safely parallelized,\n    # we implement it sequentially with a single thread handling the entire computation\n\n    # Only the first thread does the work\n    if tl.program_id(0) != 0:\n        return\n\n    # Helper functions\n    def match(b1, b2):\n    ^\nnested function definition is not supported.\n  Test 3: ERROR - at 10:4:\ndef nussinov_kernel(seq_ptr, table_ptr, N, BLOCK_SIZE: tl.constexpr):\n    # Since this kernel has complex dependencies that cannot be safely parallelized,\n    # we implement it sequentially with a single thread handling the entire computation\n\n    # Only the first thread does the work\n    if tl.program_id(0) != 0:\n        return\n\n    # Helper functions\n    def match(b1, b2):\n    ^\nnested function definition is not supported.\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.843857,
+      "triton_time_ms": 4.307153,
+      "speedup": 0.19592
+    },
+    "final_attempt": 3
+  },
+  "seidel_2d": {
+    "triton_generated": true,
+    "test_passed": false,
+    "attempts": 10,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - object of type 'int' has no len()\n  Test 2: ERROR - object of type 'int' has no len()\n  Test 3: ERROR - object of type 'int' has no len()\nSome tests FAILED!\n"
+    }
+  },
+  "symm": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.236551,
+      "triton_time_ms": 0.119524,
+      "speedup": 1.979119
+    },
+    "final_attempt": 1
+  },
+  "syr2k": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.238255,
+      "triton_time_ms": 0.065541,
+      "speedup": 3.63522
+    },
+    "final_attempt": 1
+  },
+  "syrk": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.16429,
+      "triton_time_ms": 0.050613,
+      "speedup": 3.245972
+    },
+    "final_attempt": 1
+  },
+  "trisolv": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.121493,
+      "triton_time_ms": 0.220125,
+      "speedup": 0.551927
+    },
+    "final_attempt": 1
+  },
+  "trmm": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.200132,
+      "triton_time_ms": 0.054939,
+      "speedup": 3.642793
+    },
+    "final_attempt": 1
+  }
+}

@@ -3,49 +3,44 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def trisolv_kernel(L_ptr, b_ptr, x_ptr, N, L_stride0):
-    # Get program ID to identify which iteration this handles
-    i = tl.program_id(0)
+def trisolv_kernel(L_ptr, b_ptr, x_ptr, N, L_stride, BLOCK_SIZE: tl.constexpr):
+    row = tl.program_id(0)
     
-    if i < N:
-        # Load b[i] into x[i]
-        b_val = tl.load(b_ptr + i)
-        x_val = b_val
+    if row >= N:
+        return
+    
+    # x[row] = b[row]
+    b_val = tl.load(b_ptr + row)
+    x_val = b_val
+    
+    # Process columns in blocks
+    col_offsets = tl.arange(0, BLOCK_SIZE)
+    
+    for block_start in range(0, row, BLOCK_SIZE):
+        current_offsets = block_start + col_offsets
+        mask = current_offsets < row
         
-        # Compute the dot product for j < i
-        if i > 0:
-            # Process in chunks of BLOCK_SIZE
-            BLOCK_SIZE = 32
-            j_offsets = tl.arange(0, BLOCK_SIZE)
-            
-            for j_start in range(0, i, BLOCK_SIZE):
-                current_j = j_start + j_offsets
-                j_mask = current_j < i
-                
-                # Load L[i][j] values
-                L_indices = i * L_stride0 + current_j
-                L_vals = tl.load(L_ptr + L_indices, mask=j_mask, other=0.0)
-                
-                # Load x[j] values
-                x_vals = tl.load(x_ptr + current_j, mask=j_mask, other=0.0)
-                
-                # Compute partial dot product
-                products = L_vals * x_vals
-                partial_sum = tl.sum(products)
-                x_val = x_val - partial_sum
+        # Load L[row][j] for current block
+        L_ptrs = L_ptr + row * L_stride + current_offsets
+        L_vals = tl.load(L_ptrs, mask=mask, other=0.0)
         
-        # Divide by diagonal element L[i][i]
-        diag_val = tl.load(L_ptr + i * L_stride0 + i)
-        result = x_val / diag_val
-        tl.store(x_ptr + i, result)
+        # Load x[j] for current block
+        x_ptrs = x_ptr + current_offsets
+        x_vals = tl.load(x_ptrs, mask=mask, other=0.0)
+        
+        # Compute partial sum: L[row][j] * x[j]
+        products = L_vals * x_vals
+        x_val -= tl.sum(products)
+    
+    # x[row] = x[row] / L[row][row]
+    L_diag = tl.load(L_ptr + row * L_stride + row)
+    x_val = x_val / L_diag
+    
+    tl.store(x_ptr + row, x_val)
 
 def trisolv_triton(L, b, x, N):
-    # Copy b to x initially
-    x.copy_(b)
+    BLOCK_SIZE = 64
+    grid = (N,)
     
-    # Launch one thread per row, but process sequentially
     for i in range(N):
-        grid = (1,)
-        trisolv_kernel[grid](
-            L, b, x, i + 1, L.stride(0)
-        )
+        trisolv_kernel[grid](L, b, x, N, L.stride(0), BLOCK_SIZE)

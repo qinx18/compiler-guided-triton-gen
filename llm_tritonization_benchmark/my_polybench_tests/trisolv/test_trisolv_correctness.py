@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for trisolv (Polybench) - attempt 5"""
+"""Correctness test for trisolv (Polybench) - attempt 10"""
 import sys
 import ctypes
 import numpy as np
@@ -10,7 +10,7 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.trisolv.attempt5 import trisolv_triton
+    from polybench_results.llm_triton.trisolv.attempt10 import trisolv_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
@@ -61,9 +61,11 @@ def test_correctness():
     for test_idx in range(num_tests):
         try:
             # Initialize arrays
-            L = torch.randn(120, 120, device='cuda', dtype=torch.float32)
+            # Lower triangular with |diagonal| >= 1
+            L = torch.tril(torch.randn(120, 120, device='cuda', dtype=torch.float32))
+            L.diagonal().abs_().clamp_(min=1.0)
             b = torch.randn(120, device='cuda', dtype=torch.float32)
-            x = torch.randn(120, device='cuda', dtype=torch.float32)
+            x = torch.zeros(120, device='cuda', dtype=torch.float32)
             N = 120
 
             # Clone for C reference
@@ -93,8 +95,8 @@ def test_correctness():
             max_error = max(max_error, abs_err)
             max_rel_error = max(max_rel_error, rel_err)
 
-            # Pass if absolute error < 1e-3 OR relative error < 1e-4
-            passed = (max_error < 1e-3) or (max_rel_error < 1e-4)
+            # Pass if absolute error < atol OR relative error < rtol
+            passed = (max_error < 0.001) or (max_rel_error < 0.0001)
             if passed:
                 print(f"  Test {test_idx + 1}: PASS (abs={max_error:.6e} rel={max_rel_error:.6e})")
             else:

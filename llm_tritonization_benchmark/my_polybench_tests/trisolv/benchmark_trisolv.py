@@ -10,7 +10,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton.trisolv.attempt3 import trisolv_triton
+    from polybench_results.llm_triton.trisolv.attempt4 import trisolv_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
@@ -44,9 +44,11 @@ def benchmark():
     num_warmup = 5
     num_iterations = 50
 
-    L = torch.randn(120, 120, device='cuda', dtype=torch.float32)
+    # Lower triangular with |diagonal| >= 1
+    L = torch.tril(torch.randn(120, 120, device='cuda', dtype=torch.float32))
+    L.diagonal().abs_().clamp_(min=1.0)
     b = torch.randn(120, device='cuda', dtype=torch.float32)
-    x = torch.randn(120, device='cuda', dtype=torch.float32)
+    x = torch.zeros(120, device='cuda', dtype=torch.float32)
     N = 120
 
     # C reference benchmark

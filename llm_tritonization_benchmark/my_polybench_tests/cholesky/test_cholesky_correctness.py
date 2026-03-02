@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for cholesky (Polybench) - attempt 1"""
+"""Correctness test for cholesky (Polybench) - attempt 3"""
 import sys
 import ctypes
 import numpy as np
@@ -10,7 +10,7 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.cholesky.attempt1 import cholesky_triton
+    from polybench_results.llm_triton.cholesky.attempt3 import cholesky_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
@@ -53,7 +53,9 @@ def test_correctness():
     for test_idx in range(num_tests):
         try:
             # Initialize arrays
-            A = torch.randn(120, 120, device='cuda', dtype=torch.float32)
+            # SPD matrix: A = R^T R + N*I
+            _R = torch.randn(120, 120, device='cuda', dtype=torch.float32)
+            A = _R.T @ _R + 120 * torch.eye(120, device='cuda', dtype=torch.float32)
             N = 120
 
             # Clone for C reference
@@ -79,8 +81,8 @@ def test_correctness():
             max_error = max(max_error, abs_err)
             max_rel_error = max(max_rel_error, rel_err)
 
-            # Pass if absolute error < 1e-3 OR relative error < 1e-4
-            passed = (max_error < 1e-3) or (max_rel_error < 1e-4)
+            # Pass if absolute error < atol OR relative error < rtol
+            passed = (max_error < 0.001) or (max_rel_error < 0.0001)
             if passed:
                 print(f"  Test {test_idx + 1}: PASS (abs={max_error:.6e} rel={max_rel_error:.6e})")
             else:

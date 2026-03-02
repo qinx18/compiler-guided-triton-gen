@@ -1,56 +1,17 @@
 
-## PREVIOUS ATTEMPT FAILED
+## PREVIOUS ATTEMPT FAILED - NUMERICAL ERROR
 
-**Error type**: unknown
-**Error message**:
-```
-  Test 1: ERROR - at 21:28:
+Your last attempt produced incorrect numerical results.
 
-        # Synchronize to ensure x[i] is written before other operations
-        tl.debug_barrier()
+**Error type**: Numerical error (values don't match)
+**Max error observed**: 6.670412e+11
 
-        # Compute the dot product for j < i
-        if i > 0:
-            if tl.program_id(0) == 0:
-                x_val = tl.load(x_ptr + i)
-
-                # Process in blocks for the inner loop
-                BLOCK_SIZE = 32
-                j_offsets = tl.arange(0, BLOCK_SIZE)
-                            ^
-  Test 2: ERROR - at 21:28:
-
-        # Synchronize to ensure x[i] is written before other operations
-        tl.debug_barrier()
-
-        # Compute the dot product for j < i
-        if i > 0:
-            if tl.program_id(0) == 0:
-                x_val = tl.load(x_ptr + i)
-
-                # Process in blocks for the inner loop
-                BLOCK_SIZE = 32
-                j_offsets = tl.arange(0, BLOCK_SIZE)
-                            ^
-  Test 3: ERROR - at 21:28:
-
-        # Synchronize to ensure x[i] is written before other operations
-        tl.debug_barrier()
-
-        # Compute the dot product for j < i
-        if i > 0:
-            if tl.program_id(0) == 0:
-                x_val = tl.load(x_ptr + i)
-
-                # Process in blocks for the inner loop
-                BLOCK_SIZE = 32
-                j_offsets = tl.arange(0, BLOCK_SIZE)
-                            ^
-Some tests FAILED!
-
-```
-
-Please fix the error.
+Please fix the numerical computation. Common causes:
+- Incorrect loop bounds or indices
+- Wrong array access patterns (row-major vs column-major)
+- Missing or incorrect operations
+- Off-by-one errors
+- Cloning input arrays instead of modifying them in-place (the test checks the original tensors)
 
 ## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
 ```python
@@ -59,66 +20,32 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def trisolv_kernel(L_ptr, b_ptr, x_ptr, N, L_stride0):
-    # This is a triangular solver - inherently sequential
-    # We'll process one row at a time in a single thread block
+def trisolv_kernel(L_ptr, b_ptr, x_ptr, N, L_stride):
+    i = tl.program_id(0)
     
-    for i in range(N):
-        # Load b[i] into x[i]
-        if tl.program_id(0) == 0:
-            b_val = tl.load(b_ptr + i)
-            tl.store(x_ptr + i, b_val)
-        
-        # Synchronize to ensure x[i] is written before other operations
-        tl.debug_barrier()
-        
-        # Compute the dot product for j < i
-        if i > 0:
-            if tl.program_id(0) == 0:
-                x_val = tl.load(x_ptr + i)
-                
-                # Process in blocks for the inner loop
-                BLOCK_SIZE = 32
-                j_offsets = tl.arange(0, BLOCK_SIZE)
-                
-                for j_start in range(0, i, BLOCK_SIZE):
-                    current_j = j_start + j_offsets
-                    j_mask = current_j < i
-                    
-                    # Load L[i][j] values
-                    L_indices = i * L_stride0 + current_j
-                    L_vals = tl.load(L_ptr + L_indices, mask=j_mask, other=0.0)
-                    
-                    # Load x[j] values
-                    x_vals = tl.load(x_ptr + current_j, mask=j_mask, other=0.0)
-                    
-                    # Compute partial dot product
-                    products = L_vals * x_vals
-                    partial_sum = tl.sum(products)
-                    x_val = x_val - partial_sum
-                
-                tl.store(x_ptr + i, x_val)
-        
-        # Synchronize before division
-        tl.debug_barrier()
-        
-        # Divide by diagonal element L[i][i]
-        if tl.program_id(0) == 0:
-            x_val = tl.load(x_ptr + i)
-            diag_val = tl.load(L_ptr + i * L_stride0 + i)
-            result = x_val / diag_val
-            tl.store(x_ptr + i, result)
-        
-        # Synchronize before next iteration
-        tl.debug_barrier()
+    if i >= N:
+        return
+    
+    # x[i] = b[i]
+    b_val = tl.load(b_ptr + i)
+    x_val = b_val
+    
+    # for (j = 0; j < i; j++)
+    #   x[i] -= L[i][j] * x[j];
+    for j in range(i):
+        L_ij = tl.load(L_ptr + i * L_stride + j)
+        x_j = tl.load(x_ptr + j)
+        x_val -= L_ij * x_j
+    
+    # x[i] = x[i] / L[i][i];
+    L_ii = tl.load(L_ptr + i * L_stride + i)
+    x_val = x_val / L_ii
+    
+    tl.store(x_ptr + i, x_val)
 
 def trisolv_triton(L, b, x, N):
-    # Launch with single thread block since this is inherently sequential
-    grid = (1,)
-    
-    trisolv_kernel[grid](
-        L, b, x, N, L.stride(0)
-    )
+    grid = (N,)
+    trisolv_kernel[grid](L, b, x, N, L.stride(0))
 ```
 
 
@@ -160,6 +87,33 @@ for (i = 0; i < N; i++)
       x[i] = x[i] / L[i][i];
     }
 ```
+
+## WAR (Write-After-Read) Dependencies
+
+**Note**: This kernel has WAR (Write-After-Read) dependencies.
+If you split the computation into **separate Triton kernels** launched sequentially, kernel launch barriers handle these dependencies naturally — no cloning needed.
+Cloning is only needed if reads and writes to the same array happen **within a single kernel**.
+
+**Arrays with WAR dependencies**: x
+- Read x[(j)] may conflict with Write x[(i)] from different iteration
+
+**If using a single kernel**: Create read-only copies before the parallel region:
+```python
+x_copy = x.clone()  # Read from copy, write to original
+```
+**If using separate kernels**: No cloning needed — launch one kernel per phase.
+
+
+## Parallelization Analysis
+
+**Loop dimensions**: ['i', 'j']
+**Triangular bounds**: j < i
+
+- Parallelize `j`, sequential `i`: VALID
+
+- Parallelize `i`, sequential `j`: VALID
+
+**Both `i` and `j` are freely parallelizable.** Use a 2D grid to parallelize both simultaneously for best GPU occupancy.
 
 
 ## Array Information:
@@ -222,5 +176,5 @@ vals = tl.load(ptr + offsets, mask=mask)
 
 Provide ONLY the Python code, no additional explanation.
 
-This is attempt 2 of 5. Please provide a corrected implementation.
+This is attempt 2 of 10. Please provide a corrected implementation.
 Provide ONLY the Python code, no additional explanation.

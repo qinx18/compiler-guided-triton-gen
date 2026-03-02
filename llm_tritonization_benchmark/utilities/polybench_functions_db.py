@@ -360,7 +360,7 @@ POLYBENCH_FUNCTIONS = {
       for (p = 0; p < NP; p++)
 	A[r][q][p] = sum[p];
     }""",
-        "arrays": {'sum': 'rw', 'C4': 'r', 'A': 'rw'},
+        "arrays": {'sum': 'temp', 'C4': 'r', 'A': 'rw'},
         "has_offset": False,
         "has_conditional": False,
         "has_reduction": True,
@@ -390,7 +390,7 @@ POLYBENCH_FUNCTIONS = {
    }
    y[k] = alpha;
  }""",
-        "arrays": {'r': 'r', 'y': 'rw', 'z': 'rw'},
+        "arrays": {'r': 'r', 'y': 'rw', 'z': 'temp'},
         "has_offset": True,
         "has_conditional": False,
         "has_reduction": True,
@@ -653,7 +653,7 @@ POLYBENCH_FUNCTIONS = {
         w -= A[i][j] * x[j];
      x[i] = w / A[i][i];
   }""",
-        "arrays": {'A': 'rw', 'b': 'r', 'x': 'rw', 'y': 'rw'},
+        "arrays": {'A': 'temp', 'b': 'r', 'x': 'rw', 'y': 'temp'},
         "has_offset": False,
         "has_conditional": False,
         "has_reduction": True,

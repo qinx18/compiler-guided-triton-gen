@@ -1,0 +1,203 @@
+
+## PREVIOUS ATTEMPT FAILED - NUMERICAL ERROR
+
+Your last attempt produced incorrect numerical results.
+
+**Error type**: Numerical error (values don't match)
+**Max error observed**: 1.444292e+00
+
+Please fix the numerical computation. Common causes:
+- Incorrect loop bounds or indices
+- Wrong array access patterns (row-major vs column-major)
+- Missing or incorrect operations
+- Off-by-one errors
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def jacobi_2d_kernel(A_ptr, B_ptr, N, TSTEPS, BLOCK_SIZE: tl.constexpr):
+    # Get program ID and calculate block offsets
+    pid = tl.program_id(0)
+    
+    # Calculate total interior elements
+    interior_size = (N - 2) * (N - 2)
+    
+    # Calculate offsets for this block
+    offsets = tl.arange(0, BLOCK_SIZE)
+    element_ids = pid * BLOCK_SIZE + offsets
+    mask = element_ids < interior_size
+    
+    # Convert 1D element_ids to 2D coordinates (i, j) in interior region
+    interior_i = element_ids // (N - 2) + 1
+    interior_j = element_ids % (N - 2) + 1
+    
+    # Perform TSTEPS iterations
+    for t in range(TSTEPS):
+        # First loop: update B array
+        # Load A values for stencil computation
+        center_idx = interior_i * N + interior_j
+        left_idx = interior_i * N + (interior_j - 1)
+        right_idx = interior_i * N + (interior_j + 1)
+        up_idx = (interior_i - 1) * N + interior_j
+        down_idx = (interior_i + 1) * N + interior_j
+        
+        a_center = tl.load(A_ptr + center_idx, mask=mask, other=0.0)
+        a_left = tl.load(A_ptr + left_idx, mask=mask, other=0.0)
+        a_right = tl.load(A_ptr + right_idx, mask=mask, other=0.0)
+        a_up = tl.load(A_ptr + up_idx, mask=mask, other=0.0)
+        a_down = tl.load(A_ptr + down_idx, mask=mask, other=0.0)
+        
+        # Compute B[i][j] = 0.2 * (A[i][j] + A[i][j-1] + A[i][j+1] + A[i-1][j] + A[i+1][j])
+        b_new = 0.2 * (a_center + a_left + a_right + a_up + a_down)
+        
+        # Store B values
+        tl.store(B_ptr + center_idx, b_new, mask=mask)
+        
+        # Global memory barrier to ensure all B updates are visible
+        tl.debug_barrier()
+        
+        # Second loop: update A array
+        # Load B values for stencil computation
+        b_center = tl.load(B_ptr + center_idx, mask=mask, other=0.0)
+        b_left = tl.load(B_ptr + left_idx, mask=mask, other=0.0)
+        b_right = tl.load(B_ptr + right_idx, mask=mask, other=0.0)
+        b_up = tl.load(B_ptr + up_idx, mask=mask, other=0.0)
+        b_down = tl.load(B_ptr + down_idx, mask=mask, other=0.0)
+        
+        # Compute A[i][j] = 0.2 * (B[i][j] + B[i][j-1] + B[i][j+1] + B[i-1][j] + B[i+1][j])
+        a_new = 0.2 * (b_center + b_left + b_right + b_up + b_down)
+        
+        # Store A values
+        tl.store(A_ptr + center_idx, a_new, mask=mask)
+        
+        # Global memory barrier to ensure all A updates are visible before next iteration
+        tl.debug_barrier()
+
+def jacobi_2d_triton(A, B, N, TSTEPS):
+    # Calculate total interior elements
+    interior_size = (N - 2) * (N - 2)
+    
+    # Choose block size
+    BLOCK_SIZE = 256
+    
+    # Calculate number of blocks needed
+    num_blocks = triton.cdiv(interior_size, BLOCK_SIZE)
+    
+    # Launch kernel with grid of blocks
+    grid = (num_blocks,)
+    jacobi_2d_kernel[grid](
+        A, B, N, TSTEPS, BLOCK_SIZE
+    )
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define TSTEPS 40
+#define N 90
+
+float A[N][N];
+float B[N][N];
+
+void jacobi_2d_kernel() {
+  int t, i, j;
+#pragma scop
+  for (t = 0; t < TSTEPS; t++)
+    {
+      for (i = 1; i < N - 1; i++)
+	for (j = 1; j < N - 1; j++)
+	  B[i][j] = 0.2 * (A[i][j] + A[i][j-1] + A[i][1+j] + A[1+i][j] + A[i-1][j]);
+      for (i = 1; i < N - 1; i++)
+	for (j = 1; j < N - 1; j++)
+	  A[i][j] = 0.2 * (B[i][j] + B[i][j-1] + B[i][1+j] + B[1+i][j] + B[i-1][j]);
+    }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (t = 0; t < TSTEPS; t++)
+    {
+      for (i = 1; i < N - 1; i++)
+	for (j = 1; j < N - 1; j++)
+	  B[i][j] = 0.2 * (A[i][j] + A[i][j-1] + A[i][1+j] + A[1+i][j] + A[i-1][j]);
+      for (i = 1; i < N - 1; i++)
+	for (j = 1; j < N - 1; j++)
+	  A[i][j] = 0.2 * (B[i][j] + B[i][j-1] + B[i][1+j] + B[1+i][j] + B[i-1][j]);
+    }
+```
+
+
+## Array Information:
+- `A`: read-write
+- `B`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `N` = 90
+- `TSTEPS` = 40
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `jacobi_2d_kernel`
+2. Includes a Python wrapper function named `jacobi_2d_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def jacobi_2d_triton(A, B, N, TSTEPS):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 4 of 5. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

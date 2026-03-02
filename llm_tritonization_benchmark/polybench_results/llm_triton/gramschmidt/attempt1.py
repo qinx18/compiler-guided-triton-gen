@@ -3,72 +3,55 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def gramschmidt_kernel(A, Q, R, M: tl.constexpr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
-    # This kernel processes one column k at a time
-    k = tl.program_id(0)
-    
-    if k >= N:
-        return
-    
-    # Step 1: Compute norm of column k
-    nrm = 0.0
-    i_offsets = tl.arange(0, BLOCK_SIZE)
-    
-    for i_start in range(0, M, BLOCK_SIZE):
-        current_i_offsets = i_start + i_offsets
-        mask = current_i_offsets < M
+def gramschmidt_kernel(A, Q, R, M, N, BLOCK_SIZE: tl.constexpr):
+    for k in range(N):
+        # Compute norm squared using reduction
+        block_offsets = tl.arange(0, BLOCK_SIZE)
+        nrm = 0.0
+        for block_start in range(0, M, BLOCK_SIZE):
+            i_offsets = block_start + block_offsets
+            mask = i_offsets < M
+            a_vals = tl.load(A + i_offsets * N + k, mask=mask, other=0.0)
+            nrm += tl.sum(a_vals * a_vals)
         
-        # Load A[i][k]
-        a_vals = tl.load(A + current_i_offsets * N + k, mask=mask, other=0.0)
-        nrm += tl.sum(a_vals * a_vals)
-    
-    # Step 2: Set R[k][k] = sqrt(nrm)
-    rkk = tl.sqrt(nrm)
-    tl.store(R + k * N + k, rkk)
-    
-    # Step 3: Compute Q[i][k] = A[i][k] / R[k][k]
-    for i_start in range(0, M, BLOCK_SIZE):
-        current_i_offsets = i_start + i_offsets
-        mask = current_i_offsets < M
+        # Compute R[k][k] = sqrt(nrm)
+        r_kk = tl.sqrt(nrm)
+        tl.store(R + k * N + k, r_kk)
         
-        a_vals = tl.load(A + current_i_offsets * N + k, mask=mask, other=0.0)
-        q_vals = a_vals / rkk
-        tl.store(Q + current_i_offsets * N + k, q_vals, mask=mask)
-    
-    # Step 4: Update remaining columns j > k
-    for j in range(k + 1, N):
-        # Compute R[k][j] = sum(Q[i][k] * A[i][j])
-        rkj = 0.0
+        # Compute Q[:, k] = A[:, k] / R[k][k]
+        for block_start in range(0, M, BLOCK_SIZE):
+            i_offsets = block_start + block_offsets
+            mask = i_offsets < M
+            a_vals = tl.load(A + i_offsets * N + k, mask=mask)
+            q_vals = a_vals / r_kk
+            tl.store(Q + i_offsets * N + k, q_vals, mask=mask)
         
-        for i_start in range(0, M, BLOCK_SIZE):
-            current_i_offsets = i_start + i_offsets
-            mask = current_i_offsets < M
+        # For each j > k
+        for j in range(k + 1, N):
+            # Compute R[k][j] = sum(Q[:, k] * A[:, j])
+            r_kj = 0.0
+            for block_start in range(0, M, BLOCK_SIZE):
+                i_offsets = block_start + block_offsets
+                mask = i_offsets < M
+                q_vals = tl.load(Q + i_offsets * N + k, mask=mask, other=0.0)
+                a_vals = tl.load(A + i_offsets * N + j, mask=mask, other=0.0)
+                r_kj += tl.sum(q_vals * a_vals)
             
-            q_vals = tl.load(Q + current_i_offsets * N + k, mask=mask, other=0.0)
-            a_vals = tl.load(A + current_i_offsets * N + j, mask=mask, other=0.0)
-            rkj += tl.sum(q_vals * a_vals)
-        
-        # Store R[k][j]
-        tl.store(R + k * N + j, rkj)
-        
-        # Update A[i][j] = A[i][j] - Q[i][k] * R[k][j]
-        for i_start in range(0, M, BLOCK_SIZE):
-            current_i_offsets = i_start + i_offsets
-            mask = current_i_offsets < M
+            # Store R[k][j]
+            tl.store(R + k * N + j, r_kj)
             
-            q_vals = tl.load(Q + current_i_offsets * N + k, mask=mask, other=0.0)
-            a_vals = tl.load(A + current_i_offsets * N + j, mask=mask, other=0.0)
-            new_a_vals = a_vals - q_vals * rkj
-            tl.store(A + current_i_offsets * N + j, new_a_vals, mask=mask)
+            # Update A[:, j] = A[:, j] - Q[:, k] * R[k][j]
+            for block_start in range(0, M, BLOCK_SIZE):
+                i_offsets = block_start + block_offsets
+                mask = i_offsets < M
+                a_vals = tl.load(A + i_offsets * N + j, mask=mask)
+                q_vals = tl.load(Q + i_offsets * N + k, mask=mask, other=0.0)
+                updated_a = a_vals - q_vals * r_kj
+                tl.store(A + i_offsets * N + j, updated_a, mask=mask)
 
 def gramschmidt_triton(A, Q, R, M, N):
     BLOCK_SIZE = 64
     
-    # Launch one thread block per column
-    grid = (N,)
-    
-    gramschmidt_kernel[grid](
-        A, Q, R, 
-        M, N, 
-        BLOCK_SIZE=BLOCK_SIZE
-    )
+    # Launch kernel with single thread block since algorithm is inherently sequential
+    grid = (1,)
+    gramschmidt_kernel[grid](A, Q, R, M, N, BLOCK_SIZE)

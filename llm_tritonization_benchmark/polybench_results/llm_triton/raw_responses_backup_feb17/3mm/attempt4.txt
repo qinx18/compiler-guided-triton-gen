@@ -1,0 +1,287 @@
+
+## PREVIOUS ATTEMPT FAILED - NUMERICAL ERROR
+
+Your last attempt produced incorrect numerical results.
+
+**Error type**: Numerical error (values don't match)
+**Max error observed**: 2.125380e+03
+
+Please fix the numerical computation. Common causes:
+- Incorrect loop bounds or indices
+- Wrong array access patterns (row-major vs column-major)
+- Missing or incorrect operations
+- Off-by-one errors
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def k3mm_kernel(A, B, C, D, E, F, G, NI, NJ, NK, NL, NM, 
+                BLOCK_I: tl.constexpr, BLOCK_J: tl.constexpr, BLOCK_K: tl.constexpr):
+    
+    pid_i = tl.program_id(0)
+    pid_j = tl.program_id(1)
+    pid_stage = tl.program_id(2)
+    
+    i_offsets = tl.arange(0, BLOCK_I)
+    j_offsets = tl.arange(0, BLOCK_J)
+    k_offsets = tl.arange(0, BLOCK_K)
+    
+    if pid_stage == 0:
+        # E := A*B
+        i_indices = pid_i * BLOCK_I + i_offsets
+        j_indices = pid_j * BLOCK_J + j_offsets
+        
+        i_mask = i_indices < NI
+        j_mask = j_indices < NJ
+        
+        acc_e = tl.zeros((BLOCK_I, BLOCK_J), dtype=tl.float32)
+        
+        for k_start in range(0, NK, BLOCK_K):
+            k_indices = k_start + k_offsets
+            k_mask = k_indices < NK
+            
+            a_ptrs = A + i_indices[:, None] * NK + k_indices[None, :]
+            a_mask = i_mask[:, None] & k_mask[None, :]
+            a_vals = tl.load(a_ptrs, mask=a_mask, other=0.0)
+            
+            b_ptrs = B + k_indices[:, None] * NJ + j_indices[None, :]
+            b_mask = k_mask[:, None] & j_mask[None, :]
+            b_vals = tl.load(b_ptrs, mask=b_mask, other=0.0)
+            
+            acc_e += tl.dot(a_vals, b_vals)
+        
+        e_ptrs = E + i_indices[:, None] * NJ + j_indices[None, :]
+        e_mask = i_mask[:, None] & j_mask[None, :]
+        tl.store(e_ptrs, acc_e, mask=e_mask)
+        
+    elif pid_stage == 1:
+        # F := C*D
+        i_indices = pid_i * BLOCK_I + i_offsets
+        j_indices = pid_j * BLOCK_J + j_offsets
+        
+        i_mask = i_indices < NJ
+        j_mask = j_indices < NL
+        
+        acc_f = tl.zeros((BLOCK_I, BLOCK_J), dtype=tl.float32)
+        
+        for k_start in range(0, NM, BLOCK_K):
+            k_indices = k_start + k_offsets
+            k_mask = k_indices < NM
+            
+            c_ptrs = C + i_indices[:, None] * NM + k_indices[None, :]
+            c_mask = i_mask[:, None] & k_mask[None, :]
+            c_vals = tl.load(c_ptrs, mask=c_mask, other=0.0)
+            
+            d_ptrs = D + k_indices[:, None] * NL + j_indices[None, :]
+            d_mask = k_mask[:, None] & j_mask[None, :]
+            d_vals = tl.load(d_ptrs, mask=d_mask, other=0.0)
+            
+            acc_f += tl.dot(c_vals, d_vals)
+        
+        f_ptrs = F + i_indices[:, None] * NL + j_indices[None, :]
+        f_mask = i_mask[:, None] & j_mask[None, :]
+        tl.store(f_ptrs, acc_f, mask=f_mask)
+        
+    elif pid_stage == 2:
+        # G := E*F
+        i_indices = pid_i * BLOCK_I + i_offsets
+        j_indices = pid_j * BLOCK_J + j_offsets
+        
+        i_mask = i_indices < NI
+        j_mask = j_indices < NL
+        
+        acc_g = tl.zeros((BLOCK_I, BLOCK_J), dtype=tl.float32)
+        
+        for k_start in range(0, NJ, BLOCK_K):
+            k_indices = k_start + k_offsets
+            k_mask = k_indices < NJ
+            
+            e_ptrs = E + i_indices[:, None] * NJ + k_indices[None, :]
+            e_mask = i_mask[:, None] & k_mask[None, :]
+            e_vals = tl.load(e_ptrs, mask=e_mask, other=0.0)
+            
+            f_ptrs = F + k_indices[:, None] * NL + j_indices[None, :]
+            f_mask = k_mask[:, None] & j_mask[None, :]
+            f_vals = tl.load(f_ptrs, mask=f_mask, other=0.0)
+            
+            acc_g += tl.dot(e_vals, f_vals)
+        
+        g_ptrs = G + i_indices[:, None] * NL + j_indices[None, :]
+        g_mask = i_mask[:, None] & j_mask[None, :]
+        tl.store(g_ptrs, acc_g, mask=g_mask)
+
+def k3mm_triton(A, B, C, D, E, F, G, NI, NJ, NK, NL, NM):
+    BLOCK_I = 16
+    BLOCK_J = 16
+    BLOCK_K = 32
+    
+    # Stage 0: E := A*B
+    grid_0 = (triton.cdiv(NI, BLOCK_I), triton.cdiv(NJ, BLOCK_J), 1)
+    k3mm_kernel[grid_0](A, B, C, D, E, F, G, NI, NJ, NK, NL, NM, BLOCK_I, BLOCK_J, BLOCK_K)
+    
+    # Stage 1: F := C*D
+    grid_1 = (triton.cdiv(NJ, BLOCK_I), triton.cdiv(NL, BLOCK_J), 1)
+    k3mm_kernel[grid_1](A, B, C, D, E, F, G, NI, NJ, NK, NL, NM, BLOCK_I, BLOCK_J, BLOCK_K)
+    
+    # Stage 2: G := E*F
+    grid_2 = (triton.cdiv(NI, BLOCK_I), triton.cdiv(NL, BLOCK_J), 1)
+    k3mm_kernel[grid_2](A, B, C, D, E, F, G, NI, NJ, NK, NL, NM, BLOCK_I, BLOCK_J, BLOCK_K)
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define NI 40
+#define NJ 50
+#define NK 60
+#define NL 70
+#define NM 80
+
+float E[NI][NJ];
+float A[NI][NK];
+float B[NK][NJ];
+float F[NJ][NL];
+float C[NJ][NM];
+float D[NM][NL];
+float G[NI][NL];
+
+void k3mm_kernel() {
+  int i, j, k;
+#pragma scop
+  /* E := A*B */
+  for (i = 0; i < NI; i++)
+    for (j = 0; j < NJ; j++)
+      {
+	E[i][j] = 0.0;
+	for (k = 0; k < NK; ++k)
+	  E[i][j] += A[i][k] * B[k][j];
+      }
+  /* F := C*D */
+  for (i = 0; i < NJ; i++)
+    for (j = 0; j < NL; j++)
+      {
+	F[i][j] = 0.0;
+	for (k = 0; k < NM; ++k)
+	  F[i][j] += C[i][k] * D[k][j];
+      }
+  /* G := E*F */
+  for (i = 0; i < NI; i++)
+    for (j = 0; j < NL; j++)
+      {
+	G[i][j] = 0.0;
+	for (k = 0; k < NJ; ++k)
+	  G[i][j] += E[i][k] * F[k][j];
+      }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+/* E := A*B */
+  for (i = 0; i < NI; i++)
+    for (j = 0; j < NJ; j++)
+      {
+	E[i][j] = 0.0;
+	for (k = 0; k < NK; ++k)
+	  E[i][j] += A[i][k] * B[k][j];
+      }
+  /* F := C*D */
+  for (i = 0; i < NJ; i++)
+    for (j = 0; j < NL; j++)
+      {
+	F[i][j] = 0.0;
+	for (k = 0; k < NM; ++k)
+	  F[i][j] += C[i][k] * D[k][j];
+      }
+  /* G := E*F */
+  for (i = 0; i < NI; i++)
+    for (j = 0; j < NL; j++)
+      {
+	G[i][j] = 0.0;
+	for (k = 0; k < NJ; ++k)
+	  G[i][j] += E[i][k] * F[k][j];
+      }
+```
+
+
+## Array Information:
+- `A`: read-only
+- `B`: read-only
+- `C`: read-only
+- `D`: read-only
+- `E`: read-write
+- `F`: read-write
+- `G`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `NI` = 40
+- `NJ` = 50
+- `NK` = 60
+- `NL` = 70
+- `NM` = 80
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `k3mm_kernel`
+2. Includes a Python wrapper function named `k3mm_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def k3mm_triton(A, B, C, D, E, F, G, NI, NJ, NK, NL, NM):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 4 of 5. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

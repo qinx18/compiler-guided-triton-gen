@@ -4,13 +4,14 @@
 Your last attempt produced incorrect numerical results.
 
 **Error type**: Numerical error (values don't match)
-**Max error observed**: 4.571676e-04
+**Max error observed**: 3.780085e+03
 
 Please fix the numerical computation. Common causes:
 - Incorrect loop bounds or indices
 - Wrong array access patterns (row-major vs column-major)
 - Missing or incorrect operations
 - Off-by-one errors
+- Cloning input arrays instead of modifying them in-place (the test checks the original tensors)
 
 ## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
 ```python
@@ -19,47 +20,85 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def durbin_kernel(r_ptr, y_ptr, z_ptr, N):
-    # Initialize
-    r_0 = tl.load(r_ptr + 0)
-    tl.store(y_ptr + 0, -r_0)
-    beta = 1.0
-    alpha = -r_0
+def durbin_kernel(r_ptr, y_ptr, z_ptr, k, N, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    block_start = pid * BLOCK_SIZE
+    offsets = tl.arange(0, BLOCK_SIZE)
+    indices = block_start + offsets
+    mask = indices < k
     
-    # Main loop over k
-    for k in range(1, N):
-        # Update beta
-        beta = (1.0 - alpha * alpha) * beta
-        
-        # Compute sum
-        sum_val = 0.0
-        for i in range(k):
-            r_val = tl.load(r_ptr + (k - i - 1))
+    # Calculate beta for iteration k using previous alpha from y[k-1]
+    if k == 1:
+        prev_alpha = -tl.load(r_ptr)  # alpha from k=0
+    else:
+        prev_alpha = tl.load(y_ptr + k - 1)  # alpha from k-1
+    
+    # Calculate beta recursively
+    beta = 1.0
+    current_alpha = -tl.load(r_ptr)
+    for iter_k in range(1, k):
+        beta = (1.0 - current_alpha * current_alpha) * beta
+        iter_sum = 0.0
+        for i in range(iter_k):
+            r_val = tl.load(r_ptr + iter_k - i - 1)
             y_val = tl.load(y_ptr + i)
-            sum_val += r_val * y_val
-        
-        # Update alpha
-        r_k = tl.load(r_ptr + k)
-        alpha = -(r_k + sum_val) / beta
-        
-        # Update z array
-        for i in range(k):
-            y_i = tl.load(y_ptr + i)
-            y_k_minus_i_minus_1 = tl.load(y_ptr + (k - 1 - i))
-            z_val = y_i + alpha * y_k_minus_i_minus_1
-            tl.store(z_ptr + i, z_val)
-        
-        # Copy z to y
-        for i in range(k):
-            z_val = tl.load(z_ptr + i)
-            tl.store(y_ptr + i, z_val)
-        
-        # Set y[k] = alpha
-        tl.store(y_ptr + k, alpha)
+            iter_sum += r_val * y_val
+        current_alpha = -(tl.load(r_ptr + iter_k) + iter_sum) / beta
+    
+    beta = (1.0 - current_alpha * current_alpha) * beta
+    
+    # Calculate sum for current k
+    sum_val = 0.0
+    for i in range(k):
+        r_val = tl.load(r_ptr + k - i - 1)
+        y_val = tl.load(y_ptr + i)
+        sum_val += r_val * y_val
+    
+    # Calculate alpha for current k
+    r_k = tl.load(r_ptr + k)
+    alpha = -(r_k + sum_val) / beta
+    
+    # Update z[i] = y[i] + alpha * y[k-i-1] for valid indices
+    y_vals = tl.load(y_ptr + indices, mask=mask)
+    y_rev_indices = k - indices - 1
+    y_rev_vals = tl.load(y_ptr + y_rev_indices, mask=mask)
+    z_vals = y_vals + alpha * y_rev_vals
+    tl.store(z_ptr + indices, z_vals, mask=mask)
 
 def durbin_triton(r, y, z, N):
-    grid = (1,)
-    durbin_kernel[grid](r, y, z, N)
+    # Initialize
+    y[0] = -r[0]
+    
+    BLOCK_SIZE = 128
+    
+    # Sequential over k, parallel over i
+    for k in range(1, N):
+        # Launch kernel for current k
+        grid = (triton.cdiv(k, BLOCK_SIZE),)
+        durbin_kernel[grid](r, y, z, k, N, BLOCK_SIZE)
+        
+        # Copy z to y for positions 0 to k-1
+        y[:k] = z[:k]
+        
+        # Calculate alpha for y[k] using current state
+        beta = 1.0
+        current_alpha = -r[0].item()
+        
+        for iter_k in range(1, k):
+            beta = (1.0 - current_alpha * current_alpha) * beta
+            iter_sum = 0.0
+            for i in range(iter_k):
+                iter_sum += r[iter_k - i - 1].item() * y[i].item()
+            current_alpha = -(r[iter_k].item() + iter_sum) / beta
+        
+        beta = (1.0 - current_alpha * current_alpha) * beta
+        
+        sum_val = 0.0
+        for i in range(k):
+            sum_val += r[k - i - 1].item() * y[i].item()
+        
+        alpha = -(r[k].item() + sum_val) / beta
+        y[k] = alpha
 ```
 
 
@@ -133,11 +172,60 @@ y[0] = -r[0];
  }
 ```
 
+## Parallelization Analysis
+
+**Loop dimensions**: ['k', 'i']
+**Triangular bounds**: i < k
+
+- Parallelize `i`, sequential `k`: VALID
+
+- Parallelize `k`, sequential `i`: VALID
+
+**Both `k` and `i` are freely parallelizable.** Use a 2D grid to parallelize both simultaneously for best GPU occupancy.
+
+
+================================================================================
+SCALAR EXPANSION PATTERN DETECTED
+================================================================================
+
+Kernel durbin contains scalar variables that create loop-carried
+dependencies but can be PARALLELIZED through SCALAR EXPANSION.
+
+Variable: alpha
+  Initial value: -r[0]
+  Expansion type: previous_value
+  Reason: alpha carries the previous iteration's value. Can be replaced with - (r[k-1] + sum)/beta.
+
+  Pattern: PREVIOUS-VALUE FORWARDING (trivially eliminable)
+  alpha at iteration k equals the value of (- (r[k-1] + sum)/beta) from the previous iteration.
+  Initial value (k=0): alpha = -r[0]
+
+  SIMPLIFICATION: Replace alpha with the shifted expression:
+    alpha → - (r[k-1] + sum)/beta  (for k > 0)
+    alpha → -r[0]              (for k = 0, initial value)
+
+  After substitution, the loop becomes FULLY PARALLEL.
+  No scan or sequential phase is needed!
+
+Variable: sum
+  Initial value: 0
+  Expansion type: direct_expansion
+  Reason: sum = expr[i] can be directly expanded to array
+
+  IMPLEMENTATION STRATEGY for sum:
+  ======================================================================
+
+  This can be DIRECTLY expanded - no scan needed!
+  Simply replace 'sum' with the indexed expression.
+
+================================================================================
+
+
 
 ## Array Information:
 - `r`: read-only
 - `y`: read-write
-- `z`: read-write
+- `z`: temporary scratch (read-write, not checked for correctness)
 
 ## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
 - `N` = 120
@@ -194,5 +282,5 @@ vals = tl.load(ptr + offsets, mask=mask)
 
 Provide ONLY the Python code, no additional explanation.
 
-This is attempt 5 of 5. Please provide a corrected implementation.
+This is attempt 5 of 10. Please provide a corrected implementation.
 Provide ONLY the Python code, no additional explanation.

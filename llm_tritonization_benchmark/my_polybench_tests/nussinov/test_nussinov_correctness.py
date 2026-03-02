@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for nussinov (Polybench) - attempt 1"""
+"""Correctness test for nussinov (Polybench) - attempt 10"""
 import sys
 import ctypes
 import numpy as np
@@ -10,7 +10,7 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.nussinov.attempt1 import nussinov_triton
+    from polybench_results.llm_triton.nussinov.attempt10 import nussinov_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
@@ -26,13 +26,13 @@ def run_c_reference(seq_c, table_c, N):
     lib = ctypes.CDLL(str(C_LIB_PATH))
 
     # Set global arrays in the .so
-    CType_seq = ctypes.c_float * (180)
+    CType_seq = ctypes.c_int * (180)
     c_arr_seq = CType_seq.in_dll(lib, 'seq')
-    src_seq = np.ascontiguousarray(seq_c, dtype=np.float32)
+    src_seq = np.ascontiguousarray(seq_c.astype(np.int32), dtype=np.int32)
     ctypes.memmove(c_arr_seq, src_seq.ctypes.data, src_seq.nbytes)
-    CType_table = ctypes.c_float * (180 * 180)
+    CType_table = ctypes.c_int * (180 * 180)
     c_arr_table = CType_table.in_dll(lib, 'table')
-    src_table = np.ascontiguousarray(table_c, dtype=np.float32)
+    src_table = np.ascontiguousarray(table_c.astype(np.int32), dtype=np.int32)
     ctypes.memmove(c_arr_table, src_table.ctypes.data, src_table.nbytes)
 
     # Set global scalars
@@ -45,9 +45,9 @@ def run_c_reference(seq_c, table_c, N):
     func()
 
     # Read back output arrays
-    CType_table = ctypes.c_float * (180 * 180)
+    CType_table = ctypes.c_int * (180 * 180)
     c_arr_table = CType_table.in_dll(lib, 'table')
-    table_c[:] = np.frombuffer(c_arr_table, dtype=np.float32).reshape(180, 180).copy()
+    table_c[:] = np.frombuffer(c_arr_table, dtype=np.int32).reshape(180, 180).astype(np.float32).copy()
 
 def test_correctness():
     """Test Triton vs C reference."""
@@ -57,8 +57,9 @@ def test_correctness():
     for test_idx in range(num_tests):
         try:
             # Initialize arrays
-            seq = torch.randn(180, device='cuda', dtype=torch.float32)
-            table = torch.randn(180, 180, device='cuda', dtype=torch.float32)
+            # Integer base sequence {0..3} and zero-initialized score table
+            seq = torch.randint(0, 4, (180,), device='cuda').float()
+            table = torch.zeros(180, 180, device='cuda', dtype=torch.float32)
             N = 180
 
             # Clone for C reference
@@ -86,8 +87,8 @@ def test_correctness():
             max_error = max(max_error, abs_err)
             max_rel_error = max(max_rel_error, rel_err)
 
-            # Pass if absolute error < 1e-3 OR relative error < 1e-4
-            passed = (max_error < 1e-3) or (max_rel_error < 1e-4)
+            # Pass if absolute error < atol OR relative error < rtol
+            passed = (max_error < 0.001) or (max_rel_error < 0.0001)
             if passed:
                 print(f"  Test {test_idx + 1}: PASS (abs={max_error:.6e} rel={max_rel_error:.6e})")
             else:

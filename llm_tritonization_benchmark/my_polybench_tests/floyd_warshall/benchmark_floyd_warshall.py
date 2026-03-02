@@ -10,7 +10,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton.floyd_warshall.attempt1 import floyd_warshall_triton
+    from polybench_results.llm_triton.floyd_warshall.attempt2 import floyd_warshall_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
@@ -36,7 +36,8 @@ def benchmark():
     num_warmup = 5
     num_iterations = 50
 
-    path = torch.randn(120, 120, device='cuda', dtype=torch.float32)
+    # Non-negative edge weights for shortest-path
+    path = torch.abs(torch.randn(120, 120, device='cuda', dtype=torch.float32)) * 10.0 + 1.0
     N = 120
 
     # C reference benchmark

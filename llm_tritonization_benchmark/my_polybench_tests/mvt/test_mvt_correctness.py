@@ -117,8 +117,8 @@ def test_correctness():
             max_error = max(max_error, abs_err)
             max_rel_error = max(max_rel_error, rel_err)
 
-            # Pass if absolute error < 1e-3 OR relative error < 1e-4
-            passed = (max_error < 1e-3) or (max_rel_error < 1e-4)
+            # Pass if absolute error < atol OR relative error < rtol
+            passed = (max_error < 0.001) or (max_rel_error < 0.0001)
             if passed:
                 print(f"  Test {test_idx + 1}: PASS (abs={max_error:.6e} rel={max_rel_error:.6e})")
             else:

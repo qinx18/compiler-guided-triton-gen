@@ -1,0 +1,403 @@
+
+## PREVIOUS ATTEMPT FAILED - NUMERICAL ERROR
+
+Your last attempt produced incorrect numerical results.
+
+**Error type**: Numerical error (values don't match)
+**Max error observed**: 5.340271e+01
+
+Please fix the numerical computation. Common causes:
+- Incorrect loop bounds or indices
+- Wrong array access patterns (row-major vs column-major)
+- Missing or incorrect operations
+- Off-by-one errors
+- Cloning input arrays instead of modifying them in-place (the test checks the original tensors)
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import torch
+import triton
+import triton.language as tl
+
+@triton.jit
+def adi_kernel(p_ptr, q_ptr, u_ptr, v_ptr, N, TSTEPS, 
+               BLOCK_SIZE: tl.constexpr):
+    t_id = tl.program_id(0)
+    t = t_id + 1
+    
+    if t > TSTEPS:
+        return
+    
+    # Calculate coefficients
+    DX = 1.0 / N
+    DY = 1.0 / N
+    DT = 1.0 / TSTEPS
+    B1 = 2.0
+    B2 = 1.0
+    mul1 = B1 * DT / (DX * DX)
+    mul2 = B2 * DT / (DY * DY)
+    
+    a = -mul1 / 2.0
+    b = 1.0 + mul1
+    c = a
+    d = -mul2 / 2.0
+    e = 1.0 + mul2
+    f = d
+    
+    # Column Sweep
+    for i in range(1, N-1):
+        # Set boundary conditions
+        v_idx = 0 * N + i
+        tl.store(v_ptr + v_idx, 1.0)
+        
+        p_idx = i * N + 0
+        q_idx = i * N + 0
+        tl.store(p_ptr + p_idx, 0.0)
+        v_val = tl.load(v_ptr + v_idx)
+        tl.store(q_ptr + q_idx, v_val)
+        
+        # Forward sweep
+        for j in range(1, N-1):
+            p_curr_idx = i * N + j
+            p_prev_idx = i * N + (j-1)
+            q_curr_idx = i * N + j
+            q_prev_idx = i * N + (j-1)
+            
+            u_idx1 = j * N + (i-1)
+            u_idx2 = j * N + i
+            u_idx3 = j * N + (i+1)
+            
+            p_prev = tl.load(p_ptr + p_prev_idx)
+            q_prev = tl.load(q_ptr + q_prev_idx)
+            u1 = tl.load(u_ptr + u_idx1)
+            u2 = tl.load(u_ptr + u_idx2)
+            u3 = tl.load(u_ptr + u_idx3)
+            
+            denom = a * p_prev + b
+            p_val = -c / denom
+            q_val = (-d * u1 + (1.0 + 2.0 * d) * u2 - f * u3 - a * q_prev) / denom
+            
+            tl.store(p_ptr + p_curr_idx, p_val)
+            tl.store(q_ptr + q_curr_idx, q_val)
+        
+        # Set boundary condition
+        v_end_idx = (N-1) * N + i
+        tl.store(v_ptr + v_end_idx, 1.0)
+        
+        # Backward sweep
+        for j in range(N-2, 0, -1):
+            v_curr_idx = j * N + i
+            v_next_idx = (j+1) * N + i
+            p_idx = i * N + j
+            q_idx = i * N + j
+            
+            v_next = tl.load(v_ptr + v_next_idx)
+            p_val = tl.load(p_ptr + p_idx)
+            q_val = tl.load(q_ptr + q_idx)
+            
+            v_val = p_val * v_next + q_val
+            tl.store(v_ptr + v_curr_idx, v_val)
+    
+    # Row Sweep
+    for i in range(1, N-1):
+        # Set boundary conditions
+        u_idx = i * N + 0
+        tl.store(u_ptr + u_idx, 1.0)
+        
+        p_idx = i * N + 0
+        q_idx = i * N + 0
+        tl.store(p_ptr + p_idx, 0.0)
+        u_val = tl.load(u_ptr + u_idx)
+        tl.store(q_ptr + q_idx, u_val)
+        
+        # Forward sweep
+        for j in range(1, N-1):
+            p_curr_idx = i * N + j
+            p_prev_idx = i * N + (j-1)
+            q_curr_idx = i * N + j
+            q_prev_idx = i * N + (j-1)
+            
+            v_idx1 = (i-1) * N + j
+            v_idx2 = i * N + j
+            v_idx3 = (i+1) * N + j
+            
+            p_prev = tl.load(p_ptr + p_prev_idx)
+            q_prev = tl.load(q_ptr + q_prev_idx)
+            v1 = tl.load(v_ptr + v_idx1)
+            v2 = tl.load(v_ptr + v_idx2)
+            v3 = tl.load(v_ptr + v_idx3)
+            
+            denom = d * p_prev + e
+            p_val = -f / denom
+            q_val = (-a * v1 + (1.0 + 2.0 * a) * v2 - c * v3 - d * q_prev) / denom
+            
+            tl.store(p_ptr + p_curr_idx, p_val)
+            tl.store(q_ptr + q_curr_idx, q_val)
+        
+        # Set boundary condition
+        u_end_idx = i * N + (N-1)
+        tl.store(u_ptr + u_end_idx, 1.0)
+        
+        # Backward sweep
+        for j in range(N-2, 0, -1):
+            u_curr_idx = i * N + j
+            u_next_idx = i * N + (j+1)
+            p_idx = i * N + j
+            q_idx = i * N + j
+            
+            u_next = tl.load(u_ptr + u_next_idx)
+            p_val = tl.load(p_ptr + p_idx)
+            q_val = tl.load(q_ptr + q_idx)
+            
+            u_val = p_val * u_next + q_val
+            tl.store(u_ptr + u_curr_idx, u_val)
+
+def adi_triton(p, q, u, v, N, TSTEPS):
+    BLOCK_SIZE = 1
+    grid = (TSTEPS,)
+    
+    adi_kernel[grid](
+        p, q, u, v,
+        N, TSTEPS,
+        BLOCK_SIZE=BLOCK_SIZE
+    )
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define TSTEPS 40
+#define N 60
+
+float u[N][N];
+float v[N][N];
+float p[N][N];
+float q[N][N];
+
+// Local variables from kernel function
+float DX, DY, DT;
+float B1, B2;
+float mul1, mul2;
+float a, b, c, d, e, f;
+
+void adi_kernel() {
+  int t, i, j;
+#pragma scop
+  DX = 1.0/(float)N;
+  DY = 1.0/(float)N;
+  DT = 1.0/(float)TSTEPS;
+  B1 = 2.0;
+  B2 = 1.0;
+  mul1 = B1 * DT / (DX * DX);
+  mul2 = B2 * DT / (DY * DY);
+
+  a = -mul1 /  2.0;
+  b = 1.0+mul1;
+  c = a;
+  d = -mul2 / 2.0;
+  e = 1.0+mul2;
+  f = d;
+
+ for (t=1; t<=TSTEPS; t++) {
+    //Column Sweep
+    for (i=1; i<N-1; i++) {
+      v[0][i] = 1.0;
+      p[i][0] = 0.0;
+      q[i][0] = v[0][i];
+      for (j=1; j<N-1; j++) {
+        p[i][j] = -c / (a*p[i][j-1]+b);
+        q[i][j] = (-d*u[j][i-1]+(1.0+2.0*d)*u[j][i] - f*u[j][i+1]-a*q[i][j-1])/(a*p[i][j-1]+b);
+      }
+
+      v[N-1][i] = 1.0;
+      for (j=N-2; j>=1; j--) {
+        v[j][i] = p[i][j] * v[j+1][i] + q[i][j];
+      }
+    }
+    //Row Sweep
+    for (i=1; i<N-1; i++) {
+      u[i][0] = 1.0;
+      p[i][0] = 0.0;
+      q[i][0] = u[i][0];
+      for (j=1; j<N-1; j++) {
+        p[i][j] = -f / (d*p[i][j-1]+e);
+        q[i][j] = (-a*v[i-1][j]+(1.0+2.0*a)*v[i][j] - c*v[i+1][j]-d*q[i][j-1])/(d*p[i][j-1]+e);
+      }
+      u[i][N-1] = 1.0;
+      for (j=N-2; j>=1; j--) {
+        u[i][j] = p[i][j] * u[i][j+1] + q[i][j];
+      }
+    }
+  }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+DX = 1.0/(DATA_TYPE)N;
+  DY = 1.0/(DATA_TYPE)N;
+  DT = 1.0/(DATA_TYPE)TSTEPS;
+  B1 = 2.0;
+  B2 = 1.0;
+  mul1 = B1 * DT / (DX * DX);
+  mul2 = B2 * DT / (DY * DY);
+
+  a = -mul1 /  2.0;
+  b = 1.0+mul1;
+  c = a;
+  d = -mul2 / 2.0;
+  e = 1.0+mul2;
+  f = d;
+
+ for (t=1; t<=TSTEPS; t++) {
+    //Column Sweep
+    for (i=1; i<N-1; i++) {
+      v[0][i] = 1.0;
+      p[i][0] = 0.0;
+      q[i][0] = v[0][i];
+      for (j=1; j<N-1; j++) {
+        p[i][j] = -c / (a*p[i][j-1]+b);
+        q[i][j] = (-d*u[j][i-1]+(1.0+2.0*d)*u[j][i] - f*u[j][i+1]-a*q[i][j-1])/(a*p[i][j-1]+b);
+      }
+
+      v[N-1][i] = 1.0;
+      for (j=N-2; j>=1; j--) {
+        v[j][i] = p[i][j] * v[j+1][i] + q[i][j];
+      }
+    }
+    //Row Sweep
+    for (i=1; i<N-1; i++) {
+      u[i][0] = 1.0;
+      p[i][0] = 0.0;
+      q[i][0] = u[i][0];
+      for (j=1; j<N-1; j++) {
+        p[i][j] = -f / (d*p[i][j-1]+e);
+        q[i][j] = (-a*v[i-1][j]+(1.0+2.0*a)*v[i][j] - c*v[i+1][j]-d*q[i][j-1])/(d*p[i][j-1]+e);
+      }
+      u[i][N-1] = 1.0;
+      for (j=N-2; j>=1; j--) {
+        u[i][j] = p[i][j] * u[i][j+1] + q[i][j];
+      }
+    }
+  }
+```
+
+## WAR (Write-After-Read) Dependencies
+
+**Note**: This kernel has WAR (Write-After-Read) dependencies.
+If you split the computation into **separate Triton kernels** launched sequentially, kernel launch barriers handle these dependencies naturally — no cloning needed.
+Cloning is only needed if reads and writes to the same array happen **within a single kernel**.
+
+**Loop variables** (outer to inner): t, i, j
+
+**Array `p`**: WAR carried by loop(s) `i, j`
+- Loop `t`: sequential context (not analyzed for WAR)
+- Parallelizing `i`: REQUIRES `p_copy = p.clone()`
+- Parallelizing `j`: REQUIRES `p_copy = p.clone()`
+
+**Array `u`**: WAR carried by loop(s) `i, j`
+- Loop `t`: sequential context (not analyzed for WAR)
+- Parallelizing `i`: REQUIRES `u_copy = u.clone()`
+- Parallelizing `j`: REQUIRES `u_copy = u.clone()`
+
+**Array `v`**: WAR carried by loop(s) `j`
+- Loop `t`: sequential context (not analyzed for WAR)
+- Parallelizing `i`: SAFE (no copy needed for `v`)
+- Parallelizing `j`: REQUIRES `v_copy = v.clone()`
+
+**Array `q`**: WAR carried by loop(s) `i, j`
+- Loop `t`: sequential context (not analyzed for WAR)
+- Parallelizing `i`: REQUIRES `q_copy = q.clone()`
+- Parallelizing `j`: REQUIRES `q_copy = q.clone()`
+
+
+## Parallelization Analysis
+
+**Loop dimensions**: ['t', 'i']
+
+- Parallelize `t`, sequential `i`: VALID
+  - Data dependencies detected - verify t is safe to parallelize
+
+- Parallelize `i`, sequential `t`: VALID
+  - Data dependencies detected - verify i is safe to parallelize
+
+**Both `t` and `i` are freely parallelizable.** Use a 2D grid to parallelize both simultaneously for best GPU occupancy.
+
+
+## WAR + Parallelization Recommendation
+
+- Parallelize `t`: must clone `p`, `u`, `v`, `q` before parallel region
+- Parallelize `i`: must clone `p`, `u`, `q` before parallel region
+
+
+## Array Information:
+- `p`: read-write
+- `q`: read-write
+- `u`: read-write
+- `v`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `N` = 60
+- `TSTEPS` = 40
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `adi_kernel`
+2. Includes a Python wrapper function named `adi_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def adi_triton(p, q, u, v, N, TSTEPS):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 4 of 10. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

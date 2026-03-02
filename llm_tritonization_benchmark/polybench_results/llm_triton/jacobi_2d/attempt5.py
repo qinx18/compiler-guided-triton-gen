@@ -3,79 +3,57 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def jacobi_2d_kernel(A_ptr, B_ptr, N, TSTEPS, BLOCK_SIZE: tl.constexpr):
-    # Get program ID for this block
-    block_id = tl.program_id(0)
+def jacobi_2d_kernel(A, B, N, TSTEPS, BLOCK_SIZE_I: tl.constexpr, BLOCK_SIZE_J: tl.constexpr):
+    pid_i = tl.program_id(0)
+    pid_j = tl.program_id(1)
     
-    # Calculate total interior elements
-    interior_size = (N - 2) * (N - 2)
+    i_offsets = tl.arange(0, BLOCK_SIZE_I)
+    j_offsets = tl.arange(0, BLOCK_SIZE_J)
     
-    # Calculate starting position for this block
-    block_start = block_id * BLOCK_SIZE
+    base_i = pid_i * BLOCK_SIZE_I + 1
+    base_j = pid_j * BLOCK_SIZE_J + 1
     
-    # Create offsets for vectorized operations
-    offsets = tl.arange(0, BLOCK_SIZE)
-    element_ids = block_start + offsets
-    mask = element_ids < interior_size
-    
-    # Convert 1D element_ids to 2D coordinates in interior region
-    interior_i = element_ids // (N - 2) + 1
-    interior_j = element_ids % (N - 2) + 1
-    
-    # Perform TSTEPS iterations
     for t in range(TSTEPS):
-        # First phase: compute B from A
-        center_idx = interior_i * N + interior_j
-        left_idx = interior_i * N + (interior_j - 1)
-        right_idx = interior_i * N + (interior_j + 1)
-        up_idx = (interior_i - 1) * N + interior_j
-        down_idx = (interior_i + 1) * N + interior_j
+        # First pass: A -> B
+        i_indices = base_i + i_offsets
+        j_indices = base_j + j_offsets
         
-        # Load A values for stencil
-        a_center = tl.load(A_ptr + center_idx, mask=mask, other=0.0)
-        a_left = tl.load(A_ptr + left_idx, mask=mask, other=0.0)
-        a_right = tl.load(A_ptr + right_idx, mask=mask, other=0.0)
-        a_up = tl.load(A_ptr + up_idx, mask=mask, other=0.0)
-        a_down = tl.load(A_ptr + down_idx, mask=mask, other=0.0)
+        i_mask = i_indices < (N - 1)
+        j_mask = j_indices < (N - 1)
         
-        # Compute B values
-        b_new = 0.2 * (a_center + a_left + a_right + a_down + a_up)
+        i_expanded = i_indices[:, None]
+        j_expanded = j_indices[None, :]
         
-        # Store B values
-        tl.store(B_ptr + center_idx, b_new, mask=mask)
+        mask = i_mask[:, None] & j_mask[None, :]
         
-        # Synchronize before second phase
-        tl.debug_barrier()
+        center = tl.load(A + i_expanded * N + j_expanded, mask=mask)
+        left = tl.load(A + i_expanded * N + (j_expanded - 1), mask=mask)
+        right = tl.load(A + i_expanded * N + (j_expanded + 1), mask=mask)
+        up = tl.load(A + (i_expanded - 1) * N + j_expanded, mask=mask)
+        down = tl.load(A + (i_expanded + 1) * N + j_expanded, mask=mask)
         
-        # Second phase: compute A from B
-        # Load B values for stencil
-        b_center = tl.load(B_ptr + center_idx, mask=mask, other=0.0)
-        b_left = tl.load(B_ptr + left_idx, mask=mask, other=0.0)
-        b_right = tl.load(B_ptr + right_idx, mask=mask, other=0.0)
-        b_up = tl.load(B_ptr + up_idx, mask=mask, other=0.0)
-        b_down = tl.load(B_ptr + down_idx, mask=mask, other=0.0)
+        result = 0.2 * (center + left + right + up + down)
+        tl.store(B + i_expanded * N + j_expanded, result, mask=mask)
         
-        # Compute A values
-        a_new = 0.2 * (b_center + b_left + b_right + b_down + b_up)
+        # Second pass: B -> A
+        center = tl.load(B + i_expanded * N + j_expanded, mask=mask)
+        left = tl.load(B + i_expanded * N + (j_expanded - 1), mask=mask)
+        right = tl.load(B + i_expanded * N + (j_expanded + 1), mask=mask)
+        up = tl.load(B + (i_expanded - 1) * N + j_expanded, mask=mask)
+        down = tl.load(B + (i_expanded + 1) * N + j_expanded, mask=mask)
         
-        # Store A values
-        tl.store(A_ptr + center_idx, a_new, mask=mask)
-        
-        # Synchronize before next iteration
-        tl.debug_barrier()
+        result = 0.2 * (center + left + right + up + down)
+        tl.store(A + i_expanded * N + j_expanded, result, mask=mask)
 
 def jacobi_2d_triton(A, B, N, TSTEPS):
-    # Calculate number of interior elements
-    interior_size = (N - 2) * (N - 2)
+    BLOCK_SIZE_I = 16
+    BLOCK_SIZE_J = 16
     
-    # Set block size
-    BLOCK_SIZE = 256
+    grid_i = triton.cdiv(N - 2, BLOCK_SIZE_I)
+    grid_j = triton.cdiv(N - 2, BLOCK_SIZE_J)
     
-    # Calculate number of blocks needed
-    num_blocks = triton.cdiv(interior_size, BLOCK_SIZE)
-    
-    # Launch kernel
-    grid = (num_blocks,)
-    jacobi_2d_kernel[grid](
-        A, B, N, TSTEPS, BLOCK_SIZE
+    jacobi_2d_kernel[(grid_i, grid_j)](
+        A, B, N, TSTEPS,
+        BLOCK_SIZE_I=BLOCK_SIZE_I,
+        BLOCK_SIZE_J=BLOCK_SIZE_J
     )

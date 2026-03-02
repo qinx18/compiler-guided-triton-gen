@@ -1,0 +1,163 @@
+# LLM-Generated Triton Implementation for mvt (Polybench)
+# Generated: 2026-03-02 03:21:08
+# Model: claude-sonnet-4-20250514
+
+================================================================================
+PROMPT:
+================================================================================
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define N 120
+
+float x1[N];
+float x2[N];
+float y_1[N];
+float y_2[N];
+float A[N][N];
+
+void mvt_kernel() {
+  int i, j;
+#pragma scop
+  for (i = 0; i < N; i++)
+    for (j = 0; j < N; j++)
+      x1[i] = x1[i] + A[i][j] * y_1[j];
+  for (i = 0; i < N; i++)
+    for (j = 0; j < N; j++)
+      x2[i] = x2[i] + A[j][i] * y_2[j];
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (i = 0; i < N; i++)
+    for (j = 0; j < N; j++)
+      x1[i] = x1[i] + A[i][j] * y_1[j];
+  for (i = 0; i < N; i++)
+    for (j = 0; j < N; j++)
+      x2[i] = x2[i] + A[j][i] * y_2[j];
+```
+
+
+## Array Information:
+- `A`: read-only
+- `x1`: read-write
+- `x2`: read-write
+- `y_1`: read-only
+- `y_2`: read-only
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `N` = 120
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `mvt_kernel`
+2. Includes a Python wrapper function named `mvt_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def mvt_triton(A, x1, x2, y_1, y_2, N):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+================================================================================
+RESPONSE:
+================================================================================
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def mvt_kernel(A, x1, x2, y_1, y_2, N, BLOCK_SIZE: tl.constexpr):
+    # Get row index for this program
+    row_idx = tl.program_id(0)
+    
+    if row_idx >= N:
+        return
+    
+    # Define column offsets once
+    col_offsets = tl.arange(0, BLOCK_SIZE)
+    
+    # Initialize accumulators
+    acc1 = 0.0
+    acc2 = 0.0
+    
+    # Process columns in blocks
+    for col_start in range(0, N, BLOCK_SIZE):
+        current_col_offsets = col_start + col_offsets
+        col_mask = current_col_offsets < N
+        
+        # First loop: x1[i] += A[i][j] * y_1[j]
+        a_offsets = row_idx * N + current_col_offsets
+        a_vals = tl.load(A + a_offsets, mask=col_mask, other=0.0)
+        y1_vals = tl.load(y_1 + current_col_offsets, mask=col_mask, other=0.0)
+        acc1 += tl.sum(a_vals * y1_vals)
+        
+        # Second loop: x2[i] += A[j][i] * y_2[j]
+        # A[j][i] means we need A at positions [j*N + i] for j in current_col_offsets
+        a_transpose_offsets = current_col_offsets * N + row_idx
+        a_transpose_vals = tl.load(A + a_transpose_offsets, mask=col_mask, other=0.0)
+        y2_vals = tl.load(y_2 + current_col_offsets, mask=col_mask, other=0.0)
+        acc2 += tl.sum(a_transpose_vals * y2_vals)
+    
+    # Load current values and add accumulation
+    x1_current = tl.load(x1 + row_idx)
+    x2_current = tl.load(x2 + row_idx)
+    
+    # Store results
+    tl.store(x1 + row_idx, x1_current + acc1)
+    tl.store(x2 + row_idx, x2_current + acc2)
+
+def mvt_triton(A, x1, x2, y_1, y_2, N):
+    BLOCK_SIZE = 64
+    grid = (triton.cdiv(N, 1),)
+    
+    mvt_kernel[grid](A, x1, x2, y_1, y_2, N, BLOCK_SIZE)
+```

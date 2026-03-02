@@ -3,68 +3,74 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def symm_kernel(A_ptr, B_ptr, C_ptr, alpha, beta, M, N, stride_A0, stride_A1, stride_B0, stride_B1, stride_C0, stride_C1, BLOCK_SIZE: tl.constexpr):
-    pid = tl.program_id(0)
+def symm_kernel(A_ptr, B_ptr, C_ptr, alpha, beta, M, N, 
+                A_stride_0, A_stride_1, B_stride_0, B_stride_1, C_stride_0, C_stride_1,
+                BLOCK_SIZE_I: tl.constexpr, BLOCK_SIZE_J: tl.constexpr):
     
-    # Each program handles one (i, j) pair
-    i = pid // N
-    j = pid % N
+    pid_i = tl.program_id(0)
+    pid_j = tl.program_id(1)
     
-    if i >= M or j >= N:
-        return
+    i_start = pid_i * BLOCK_SIZE_I
+    j_start = pid_j * BLOCK_SIZE_J
     
-    # Initialize temp2
-    temp2 = 0.0
+    i_offsets = i_start + tl.arange(0, BLOCK_SIZE_I)
+    j_offsets = j_start + tl.arange(0, BLOCK_SIZE_J)
     
-    # Load B[i][j] once since it's used multiple times
-    B_ij = tl.load(B_ptr + i * stride_B0 + j * stride_B1)
+    i_mask = i_offsets < M
+    j_mask = j_offsets < N
     
-    # Process k < i
-    for k in range(i):
-        # Load A[i][k]
-        A_ik = tl.load(A_ptr + i * stride_A0 + k * stride_A1)
+    # Process each i in the block sequentially
+    for i_block_idx in range(BLOCK_SIZE_I):
+        i = i_start + i_block_idx
         
-        # Load current C[k][j]
-        C_kj = tl.load(C_ptr + k * stride_C0 + j * stride_C1)
+        if i >= M:
+            continue
+            
+        # Load B[i,j] for all j in block
+        b_ij_ptr = B_ptr + i * B_stride_0 + j_offsets * B_stride_1
+        b_ij = tl.load(b_ij_ptr, mask=j_mask, other=0.0)
         
-        # Update C[k][j] += alpha * B[i][j] * A[i][k]
-        C_kj_new = C_kj + alpha * B_ij * A_ik
-        tl.store(C_ptr + k * stride_C0 + j * stride_C1, C_kj_new)
+        # Load A[i,i]
+        a_ii = tl.load(A_ptr + i * A_stride_0 + i * A_stride_1)
         
-        # Load B[k][j] for temp2 accumulation  
-        B_kj = tl.load(B_ptr + k * stride_B0 + j * stride_B1)
+        # Initialize temp2 for this i
+        temp2 = tl.zeros([BLOCK_SIZE_J], dtype=tl.float32)
         
-        # Accumulate temp2 += B[k][j] * A[i][k]
-        temp2 += B_kj * A_ik
-    
-    # Load current C[i][j] after all updates to C[k][j] are done
-    C_ij = tl.load(C_ptr + i * stride_C0 + j * stride_C1)
-    
-    # Load A[i][i]
-    A_ii = tl.load(A_ptr + i * stride_A0 + i * stride_A1)
-    
-    # Update C[i][j] = beta * C[i][j] + alpha * B[i][j] * A[i][i] + alpha * temp2
-    C_ij_new = beta * C_ij + alpha * B_ij * A_ii + alpha * temp2
-    tl.store(C_ptr + i * stride_C0 + j * stride_C1, C_ij_new)
+        # Inner k loop: for k in range(i)
+        for k in range(i):
+            # Load A[k,i] (using A's symmetry)
+            a_ki = tl.load(A_ptr + k * A_stride_0 + i * A_stride_1)
+            
+            # Load B[k,j] for all j
+            b_kj_ptr = B_ptr + k * B_stride_0 + j_offsets * B_stride_1
+            b_kj = tl.load(b_kj_ptr, mask=j_mask, other=0.0)
+            
+            # Update C[k,j] += alpha * B[i,j] * A[k,i]
+            c_kj_ptr = C_ptr + k * C_stride_0 + j_offsets * C_stride_1
+            c_kj = tl.load(c_kj_ptr, mask=j_mask, other=0.0)
+            c_kj = c_kj + alpha * b_ij * a_ki
+            tl.store(c_kj_ptr, c_kj, mask=j_mask)
+            
+            # Accumulate temp2 += B[k,j] * A[k,i]
+            temp2 = temp2 + b_kj * a_ki
+        
+        # Update C[i,j] = beta * C[i,j] + alpha * B[i,j] * A[i,i] + alpha * temp2
+        c_ij_ptr = C_ptr + i * C_stride_0 + j_offsets * C_stride_1
+        c_ij = tl.load(c_ij_ptr, mask=j_mask, other=0.0)
+        c_ij = beta * c_ij + alpha * b_ij * a_ii + alpha * temp2
+        tl.store(c_ij_ptr, c_ij, mask=j_mask)
 
 def symm_triton(A, B, C, alpha, beta, M, N):
-    # Grid: one program per (i, j) pair
-    grid = (M * N,)
+    BLOCK_SIZE_I = 4
+    BLOCK_SIZE_J = 16
     
-    # Block size
-    BLOCK_SIZE = 32
-    
-    # Make a copy of C to avoid race conditions
-    C_work = C.clone()
+    grid = (triton.cdiv(M, BLOCK_SIZE_I), triton.cdiv(N, BLOCK_SIZE_J))
     
     symm_kernel[grid](
-        A, B, C_work,
-        alpha, beta, M, N,
-        A.stride(0), A.stride(1),
+        A, B, C, alpha, beta, M, N,
+        A.stride(0), A.stride(1), 
         B.stride(0), B.stride(1),
-        C_work.stride(0), C_work.stride(1),
-        BLOCK_SIZE=BLOCK_SIZE
+        C.stride(0), C.stride(1),
+        BLOCK_SIZE_I=BLOCK_SIZE_I, 
+        BLOCK_SIZE_J=BLOCK_SIZE_J
     )
-    
-    # Copy result back
-    C.copy_(C_work)

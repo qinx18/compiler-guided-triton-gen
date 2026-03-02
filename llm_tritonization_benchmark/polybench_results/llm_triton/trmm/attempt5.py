@@ -3,81 +3,66 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def trmm_kernel(
-    A_ptr, B_ptr, alpha,
-    M, N,
-    stride_A_0, stride_A_1,
-    stride_B_0, stride_B_1,
-    BLOCK_I: tl.constexpr, BLOCK_J: tl.constexpr
-):
+def trmm_kernel(A_ptr, B_ptr, alpha, M, N, stride_A_0, stride_A_1, stride_B_0, stride_B_1, BLOCK_SIZE_I: tl.constexpr, BLOCK_SIZE_J: tl.constexpr):
     pid_i = tl.program_id(0)
     pid_j = tl.program_id(1)
     
-    i_offsets = pid_i * BLOCK_I + tl.arange(0, BLOCK_I)
-    j_offsets = pid_j * BLOCK_J + tl.arange(0, BLOCK_J)
+    i_offsets = tl.arange(0, BLOCK_SIZE_I)
+    j_offsets = tl.arange(0, BLOCK_SIZE_J)
     
-    i_mask = i_offsets < M
-    j_mask = j_offsets < N
+    i_start = pid_i * BLOCK_SIZE_I
+    j_start = pid_j * BLOCK_SIZE_J
     
-    # Load initial B values
-    b_ptrs = B_ptr + i_offsets[:, None] * stride_B_0 + j_offsets[None, :] * stride_B_1
-    mask = i_mask[:, None] & j_mask[None, :]
-    result = tl.load(b_ptrs, mask=mask, other=0.0)
+    i_indices = i_start + i_offsets
+    j_indices = j_start + j_offsets
     
-    # Process k values
-    k_offsets = tl.arange(0, BLOCK_I)
+    i_mask = i_indices < M
+    j_mask = j_indices < N
     
-    for k_block in range(0, triton.cdiv(M, BLOCK_I)):
-        k_base = k_block * BLOCK_I
-        k_indices = k_base + k_offsets
-        k_valid = k_indices < M
+    # Load initial B[i, j] values
+    B_ptrs = B_ptr + i_indices[:, None] * stride_B_0 + j_indices[None, :] * stride_B_1
+    B_vals = tl.load(B_ptrs, mask=i_mask[:, None] & j_mask[None, :], other=0.0)
+    
+    # For each i in the block
+    for i_block_idx in range(BLOCK_SIZE_I):
+        i_actual = i_start + i_block_idx
+        i_valid = i_actual < M
         
-        # For each i in current block
-        for i_local in range(BLOCK_I):
-            i_global = pid_i * BLOCK_I + i_local
-            if i_global >= M:
-                continue
-                
-            # Check if k > i
-            k_mask = k_valid & (k_indices > i_global)
+        # Inner k loop: k from i+1 to M-1
+        for k in range(M):
+            k_valid = (k > i_actual) & (k < M) & i_valid
             
-            if tl.sum(k_mask.to(tl.int32)) == 0:
-                continue
+            # Load A[k, i_actual]
+            A_ptr_k = A_ptr + k * stride_A_0 + i_actual * stride_A_1
+            A_val = tl.load(A_ptr_k)
             
-            # Load A[k, i] values
-            a_ptrs = A_ptr + k_indices * stride_A_0 + i_global * stride_A_1
-            a_vals = tl.load(a_ptrs, mask=k_mask, other=0.0)
+            # Load B[k, j] for all j in block
+            B_k_ptrs = B_ptr + k * stride_B_0 + j_indices * stride_B_1
+            B_k_vals = tl.load(B_k_ptrs, mask=j_mask, other=0.0)
             
-            # Load B[k, j] values
-            b_k_ptrs = B_ptr + k_indices[:, None] * stride_B_0 + j_offsets[None, :] * stride_B_1
-            b_k_mask = k_mask[:, None] & j_mask[None, :]
-            b_k_vals = tl.load(b_k_ptrs, mask=b_k_mask, other=0.0)
-            
-            # Compute products and sum over k
-            products = a_vals[:, None] * b_k_vals
-            k_sum = tl.sum(products, axis=0)
-            
-            # Update result for this i row
-            if i_local < BLOCK_I:
-                result = tl.where((tl.arange(0, BLOCK_I) == i_local)[:, None], 
-                                result + k_sum[None, :], result)
+            # Update B[i_actual, j] for all j in block
+            i_match_mask = (i_indices == i_actual)
+            update_mask = i_match_mask[:, None] & j_mask[None, :] & k_valid
+            B_vals = B_vals + tl.where(update_mask, A_val * B_k_vals[None, :], 0.0)
     
-    # Apply alpha scaling
-    result = alpha * result
+    # Scale by alpha
+    B_vals = alpha * B_vals
     
-    # Store results back to B
-    tl.store(b_ptrs, result, mask=mask)
+    # Store back to B[i, j]
+    tl.store(B_ptrs, B_vals, mask=i_mask[:, None] & j_mask[None, :])
 
 def trmm_triton(A, B, alpha, M, N):
-    BLOCK_I = 16
-    BLOCK_J = 32
+    BLOCK_SIZE_I = 16
+    BLOCK_SIZE_J = 32
     
-    grid = (triton.cdiv(M, BLOCK_I), triton.cdiv(N, BLOCK_J))
+    grid_i = triton.cdiv(M, BLOCK_SIZE_I)
+    grid_j = triton.cdiv(N, BLOCK_SIZE_J)
+    grid = (grid_i, grid_j)
     
     trmm_kernel[grid](
-        A, B, alpha,
-        M, N,
+        A, B, alpha, M, N,
         A.stride(0), A.stride(1),
         B.stride(0), B.stride(1),
-        BLOCK_I=BLOCK_I, BLOCK_J=BLOCK_J
+        BLOCK_SIZE_I=BLOCK_SIZE_I,
+        BLOCK_SIZE_J=BLOCK_SIZE_J
     )

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for 2mm (Polybench) - attempt 5"""
+"""Correctness test for 2mm (Polybench) - attempt 10"""
 import sys
 import ctypes
 import numpy as np
@@ -11,7 +11,7 @@ import torch
 # Import Triton implementation
 try:
     import importlib
-    _mod = importlib.import_module("polybench_results.llm_triton.2mm.attempt5")
+    _mod = importlib.import_module("polybench_results.llm_triton_no_analysis.2mm.attempt10")
     k2mm_triton = _mod.k2mm_triton
 except ImportError as e:
     print(f"Import error: {e}")
@@ -125,8 +125,8 @@ def test_correctness():
             max_error = max(max_error, abs_err)
             max_rel_error = max(max_rel_error, rel_err)
 
-            # Pass if absolute error < 1e-3 OR relative error < 1e-4
-            passed = (max_error < 1e-3) or (max_rel_error < 1e-4)
+            # Pass if absolute error < atol OR relative error < rtol
+            passed = (max_error < 0.001) or (max_rel_error < 0.0001)
             if passed:
                 print(f"  Test {test_idx + 1}: PASS (abs={max_error:.6e} rel={max_rel_error:.6e})")
             else:

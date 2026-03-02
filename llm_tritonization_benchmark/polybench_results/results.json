@@ -2,201 +2,386 @@
   "2mm": {
     "triton_generated": true,
     "test_passed": true,
-    "attempts": 1,
-    "final_error": null
+    "attempts": 7,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 18:12:\n    pid_j = tl.program_id(1)\n\n    # First loop: tmp[i][j] = alpha * A[i][k] * B[k][j]\n    offsets_i = pid_i * BLOCK_SIZE_I + tl.arange(0, BLOCK_SIZE_I)\n    offsets_j = pid_j * BLOCK_SIZE_J + tl.arange(0, BLOCK_SIZE_J)\n\n    mask_i = offsets_i < NI\n    mask_j = offsets_j < NJ\n\n    for i in range(BLOCK_SIZE_I):\n        if pid_i * BLOCK_SIZE_I + i >= NI:\n            break\n            ^\nunsupported AST node type: Break\n  Test 2: ERROR - at 18:12:\n    pid_j = tl.program_id(1)\n\n    # First loop: tmp[i][j] = alpha * A[i][k] * B[k][j]\n    offsets_i = pid_i * BLOCK_SIZE_I + tl.arange(0, BLOCK_SIZE_I)\n    offsets_j = pid_j * BLOCK_SIZE_J + tl.arange(0, BLOCK_SIZE_J)\n\n    mask_i = offsets_i < NI\n    mask_j = offsets_j < NJ\n\n    for i in range(BLOCK_SIZE_I):\n        if pid_i * BLOCK_SIZE_I + i >= NI:\n            break\n            ^\nunsupported AST node type: Break\n  Test 3: ERROR - at 18:12:\n    pid_j = tl.program_id(1)\n\n    # First loop: tmp[i][j] = alpha * A[i][k] * B[k][j]\n    offsets_i = pid_i * BLOCK_SIZE_I + tl.arange(0, BLOCK_SIZE_I)\n    offsets_j = pid_j * BLOCK_SIZE_J + tl.arange(0, BLOCK_SIZE_J)\n\n    mask_i = offsets_i < NI\n    mask_j = offsets_j < NJ\n\n    for i in range(BLOCK_SIZE_I):\n        if pid_i * BLOCK_SIZE_I + i >= NI:\n            break\n            ^\nunsupported AST node type: Break\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.387193,
+      "triton_time_ms": 0.130523,
+      "speedup": 2.966474
+    },
+    "final_attempt": 7
   },
   "3mm": {
     "triton_generated": true,
     "test_passed": true,
-    "attempts": 1,
-    "final_error": null
+    "attempts": 6,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=4.282837e+00 rel_error=2.151597e-03",
+      "max_error": "4.282837e+00"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.605947,
+      "triton_time_ms": 0.138492,
+      "speedup": 4.375312
+    },
+    "final_attempt": 6
   },
   "adi": {
     "triton_generated": true,
     "test_passed": true,
-    "attempts": 1,
-    "final_error": null
+    "attempts": 9,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 26:12:\n\n    a = -mul1 / 2.0\n    b = 1.0 + mul1\n    c = a\n    d = -mul2 / 2.0\n    e = 1.0 + mul2\n    f = d\n\n    for i_block in range(BLOCK_I):\n        i_val = 1 + i_idx * BLOCK_I + i_block\n        if i_val >= N - 1:\n            continue\n            ^\nunsupported AST node type: Continue\n  Test 2: ERROR - at 26:12:\n\n    a = -mul1 / 2.0\n    b = 1.0 + mul1\n    c = a\n    d = -mul2 / 2.0\n    e = 1.0 + mul2\n    f = d\n\n    for i_block in range(BLOCK_I):\n        i_val = 1 + i_idx * BLOCK_I + i_block\n        if i_val >= N - 1:\n            continue\n            ^\nunsupported AST node type: Continue\n  Test 3: ERROR - at 26:12:\n\n    a = -mul1 / 2.0\n    b = 1.0 + mul1\n    c = a\n    d = -mul2 / 2.0\n    e = 1.0 + mul2\n    f = d\n\n    for i_block in range(BLOCK_I):\n        i_val = 1 + i_idx * BLOCK_I + i_block\n        if i_val >= N - 1:\n            continue\n            ^\nunsupported AST node type: Continue\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 2.91589,
+      "triton_time_ms": 22.256856,
+      "speedup": 0.131011
+    },
+    "final_attempt": 9
   },
   "atax": {
     "triton_generated": true,
-    "test_passed": true,
-    "attempts": 1,
-    "final_error": null
+    "test_passed": false,
+    "attempts": 10,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=2.071850e+02 rel_error=6.336730e-01",
+      "max_error": "2.071850e+02"
+    }
   },
   "bicg": {
     "triton_generated": true,
     "test_passed": true,
     "attempts": 1,
-    "final_error": null
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.149347,
+      "triton_time_ms": 0.084759,
+      "speedup": 1.762024
+    },
+    "final_attempt": 1
   },
   "cholesky": {
     "triton_generated": true,
     "test_passed": true,
-    "attempts": 1,
-    "final_error": null
+    "attempts": 3,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=2.821868e+02 rel_error=5.369182e+00",
+      "max_error": "2.821868e+02"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.331791,
+      "triton_time_ms": 2.609034,
+      "speedup": 0.12717
+    },
+    "final_attempt": 3
   },
   "correlation": {
     "triton_generated": true,
     "test_passed": true,
-    "attempts": 1,
-    "final_error": null
+    "attempts": 2,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.420396,
+      "triton_time_ms": 0.219151,
+      "speedup": 1.918299
+    },
+    "final_attempt": 2
   },
   "covariance": {
     "triton_generated": true,
     "test_passed": true,
-    "attempts": 1,
-    "final_error": null
+    "attempts": 5,
+    "final_error": {
+      "type": "unknown",
+      "message": ":24:\n\n                # Store upper triangular\n                cov_indices = i * M + j_indices\n                tl.store(cov_ptr + cov_indices, cov_vals, mask=j_mask)\n\n                # Store lower triangular (symmetric)\n                for j_block_idx in range(BLOCK_SIZE):\n                    j_val = j_start + j_block_idx\n                    is_valid = j_val < M\n                    is_not_diagonal = j_val != i\n                    is_upper = j_val >= i\n                    if (is_valid and is_not_diagonal and is_upper):\n                        ^\nchained boolean operators (A or B or C) are not supported; use parentheses to split the chain.\n  Test 2: ERROR - at 80:24:\n\n                # Store upper triangular\n                cov_indices = i * M + j_indices\n                tl.store(cov_ptr + cov_indices, cov_vals, mask=j_mask)\n\n                # Store lower triangular (symmetric)\n                for j_block_idx in range(BLOCK_SIZE):\n                    j_val = j_start + j_block_idx\n                    is_valid = j_val < M\n                    is_not_diagonal = j_val != i\n                    is_upper = j_val >= i\n                    if (is_valid and is_not_diagonal and is_upper):\n                        ^\nchained boolean operators (A or B or C) are not supported; use parentheses to split the chain.\n  Test 3: ERROR - at 80:24:\n\n                # Store upper triangular\n                cov_indices = i * M + j_indices\n                tl.store(cov_ptr + cov_indices, cov_vals, mask=j_mask)\n\n                # Store lower triangular (symmetric)\n                for j_block_idx in range(BLOCK_SIZE):\n                    j_val = j_start + j_block_idx\n                    is_valid = j_val < M\n                    is_not_diagonal = j_val != i\n                    is_upper = j_val >= i\n                    if (is_valid and is_not_diagonal and is_upper):\n                        ^\nchained boolean operators (A or B or C) are not supported; use parentheses to split the chain.\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.407433,
+      "triton_time_ms": 0.412257,
+      "speedup": 0.988299
+    },
+    "final_attempt": 5
   },
   "deriche": {
     "triton_generated": true,
-    "test_passed": true,
-    "attempts": 1,
-    "final_error": null
+    "test_passed": false,
+    "attempts": 10,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 19:9:\n        return\n\n    # Precompute constants\n    exp_alpha = tl.exp(-alpha)\n    exp_2alpha = tl.exp(-2.0 * alpha)\n\n    k = (1.0 - exp_alpha) * (1.0 - exp_alpha) / (1.0 + 2.0 * alpha * exp_alpha - exp_2alpha)\n    a1 = k\n    a2 = k * exp_alpha * (alpha - 1.0)\n    a3 = k * exp_alpha * (alpha + 1.0)\n    a4 = -k * exp_2alpha\n    b1 = 2.0 ** (-alpha)\n         ^\nAttributeError(\"'tensor' object has no attribute '__rpow__'\")\n  Test 2: ERROR - at 19:9:\n        return\n\n    # Precompute constants\n    exp_alpha = tl.exp(-alpha)\n    exp_2alpha = tl.exp(-2.0 * alpha)\n\n    k = (1.0 - exp_alpha) * (1.0 - exp_alpha) / (1.0 + 2.0 * alpha * exp_alpha - exp_2alpha)\n    a1 = k\n    a2 = k * exp_alpha * (alpha - 1.0)\n    a3 = k * exp_alpha * (alpha + 1.0)\n    a4 = -k * exp_2alpha\n    b1 = 2.0 ** (-alpha)\n         ^\nAttributeError(\"'tensor' object has no attribute '__rpow__'\")\n  Test 3: ERROR - at 19:9:\n        return\n\n    # Precompute constants\n    exp_alpha = tl.exp(-alpha)\n    exp_2alpha = tl.exp(-2.0 * alpha)\n\n    k = (1.0 - exp_alpha) * (1.0 - exp_alpha) / (1.0 + 2.0 * alpha * exp_alpha - exp_2alpha)\n    a1 = k\n    a2 = k * exp_alpha * (alpha - 1.0)\n    a3 = k * exp_alpha * (alpha + 1.0)\n    a4 = -k * exp_2alpha\n    b1 = 2.0 ** (-alpha)\n         ^\nAttributeError(\"'tensor' object has no attribute '__rpow__'\")\nSome tests FAILED!\n"
+    }
   },
   "doitgen": {
     "triton_generated": true,
-    "test_passed": false,
-    "attempts": 5,
-    "final_error": {
-      "type": "numerical",
-      "message": "abs_error=5.401676e+05 rel_error=2.118023e+04",
-      "max_error": "5.401676e+05"
-    }
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.39275,
+      "triton_time_ms": 0.060089,
+      "speedup": 6.536132
+    },
+    "final_attempt": 1
   },
   "durbin": {
     "triton_generated": true,
     "test_passed": false,
-    "attempts": 5,
+    "attempts": 10,
     "final_error": {
       "type": "numerical",
-      "message": "abs_error=1.124741e-02 rel_error=2.116323e-03",
-      "max_error": "1.124741e-02"
+      "message": "abs_error=7.161076e+00 rel_error=1.137599e+00",
+      "max_error": "7.161076e+00"
     }
   },
   "fdtd_2d": {
     "triton_generated": true,
     "test_passed": true,
-    "attempts": 1,
-    "final_error": null
+    "attempts": 8,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=2.651614e+01 rel_error=3.149504e+00",
+      "max_error": "2.651614e+01"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.344947,
+      "triton_time_ms": 0.648627,
+      "speedup": 0.531811
+    },
+    "final_attempt": 8
   },
   "floyd_warshall": {
     "triton_generated": true,
     "test_passed": true,
-    "attempts": 1,
-    "final_error": null
+    "attempts": 2,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 29:16:\n        # Load path[i][k] for all i in block\n        path_ik_ptrs = path_ptr + i_indices * N + k\n        path_ik = tl.load(path_ik_ptrs, mask=mask_i)\n\n        # Load path[k][j] for all j in block\n        path_kj_ptrs = path_ptr + k * N + j_indices\n        path_kj = tl.load(path_kj_ptrs, mask=mask_j)\n\n        # Compute for all (i,j) pairs in this block\n        for i_offset in range(BLOCK_SIZE_I):\n            if block_start_i + i_offset >= N:\n                break\n                ^\nunsupported AST node type: Break\n  Test 2: ERROR - at 29:16:\n        # Load path[i][k] for all i in block\n        path_ik_ptrs = path_ptr + i_indices * N + k\n        path_ik = tl.load(path_ik_ptrs, mask=mask_i)\n\n        # Load path[k][j] for all j in block\n        path_kj_ptrs = path_ptr + k * N + j_indices\n        path_kj = tl.load(path_kj_ptrs, mask=mask_j)\n\n        # Compute for all (i,j) pairs in this block\n        for i_offset in range(BLOCK_SIZE_I):\n            if block_start_i + i_offset >= N:\n                break\n                ^\nunsupported AST node type: Break\n  Test 3: ERROR - at 29:16:\n        # Load path[i][k] for all i in block\n        path_ik_ptrs = path_ptr + i_indices * N + k\n        path_ik = tl.load(path_ik_ptrs, mask=mask_i)\n\n        # Load path[k][j] for all j in block\n        path_kj_ptrs = path_ptr + k * N + j_indices\n        path_kj = tl.load(path_kj_ptrs, mask=mask_j)\n\n        # Compute for all (i,j) pairs in this block\n        for i_offset in range(BLOCK_SIZE_I):\n            if block_start_i + i_offset >= N:\n                break\n                ^\nunsupported AST node type: Break\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 1.015411,
+      "triton_time_ms": 1.354887,
+      "speedup": 0.749443
+    },
+    "final_attempt": 2
   },
   "gemm": {
     "triton_generated": true,
     "test_passed": true,
     "attempts": 1,
-    "final_error": null
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.18253,
+      "triton_time_ms": 0.059451,
+      "speedup": 3.070232
+    },
+    "final_attempt": 1
   },
   "gemver": {
     "triton_generated": true,
     "test_passed": true,
-    "attempts": 1,
-    "final_error": null
+    "attempts": 3,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=6.339768e+03 rel_error=4.517211e-01",
+      "max_error": "6.339768e+03"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.320561,
+      "triton_time_ms": 0.214487,
+      "speedup": 1.494551
+    },
+    "final_attempt": 3
   },
   "gesummv": {
     "triton_generated": true,
     "test_passed": true,
     "attempts": 1,
-    "final_error": null
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.165231,
+      "triton_time_ms": 0.083936,
+      "speedup": 1.968527
+    },
+    "final_attempt": 1
   },
   "gramschmidt": {
     "triton_generated": true,
-    "test_passed": false,
-    "attempts": 5,
-    "final_error": {
-      "type": "numerical",
-      "message": "abs_error=3.399412e+00 rel_error=1.384647e+00",
-      "max_error": "3.399412e+00"
-    }
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.42994,
+      "triton_time_ms": 1.550123,
+      "speedup": 0.277359
+    },
+    "final_attempt": 1
   },
   "heat_3d": {
     "triton_generated": true,
     "test_passed": true,
     "attempts": 1,
-    "final_error": null
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 4.976926,
+      "triton_time_ms": 2.422552,
+      "speedup": 2.054415
+    },
+    "final_attempt": 1
   },
   "jacobi_1d": {
     "triton_generated": true,
     "test_passed": true,
-    "attempts": 1,
-    "final_error": null
+    "attempts": 10,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=1.252203e+00 rel_error=1.172755e+00",
+      "max_error": "1.252203e+00"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.078374,
+      "triton_time_ms": 1.003489,
+      "speedup": 0.078102
+    },
+    "final_attempt": 10
   },
   "jacobi_2d": {
     "triton_generated": true,
     "test_passed": true,
-    "attempts": 1,
-    "final_error": null
+    "attempts": 10,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 19:7:\n\n    # Check i bounds\n    if i >= N - 1:\n        return\n\n    # Process j values in blocks\n    j_offsets = tl.arange(0, BLOCK_SIZE)\n    j_indices = j_start + j_offsets + 1\n    j_mask = (j_indices < N - 1)\n\n    # First phase: compute B[i][j] from A\n    if j_mask.any():\n       ^\nAttributeError(\"'tensor' object has no attribute 'any'\")\n  Test 2: ERROR - at 19:7:\n\n    # Check i bounds\n    if i >= N - 1:\n        return\n\n    # Process j values in blocks\n    j_offsets = tl.arange(0, BLOCK_SIZE)\n    j_indices = j_start + j_offsets + 1\n    j_mask = (j_indices < N - 1)\n\n    # First phase: compute B[i][j] from A\n    if j_mask.any():\n       ^\nAttributeError(\"'tensor' object has no attribute 'any'\")\n  Test 3: ERROR - at 19:7:\n\n    # Check i bounds\n    if i >= N - 1:\n        return\n\n    # Process j values in blocks\n    j_offsets = tl.arange(0, BLOCK_SIZE)\n    j_indices = j_start + j_offsets + 1\n    j_mask = (j_indices < N - 1)\n\n    # First phase: compute B[i][j] from A\n    if j_mask.any():\n       ^\nAttributeError(\"'tensor' object has no attribute 'any'\")\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.58504,
+      "triton_time_ms": 0.971875,
+      "speedup": 0.60197
+    },
+    "final_attempt": 10
   },
   "lu": {
     "triton_generated": true,
     "test_passed": true,
     "attempts": 1,
-    "final_error": null
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.508199,
+      "triton_time_ms": 1.345221,
+      "speedup": 0.377781
+    },
+    "final_attempt": 1
   },
   "ludcmp": {
     "triton_generated": true,
-    "test_passed": false,
-    "attempts": 5,
-    "final_error": {
-      "type": "numerical",
-      "message": "abs_error=9.857227e+02 rel_error=2.840305e-02",
-      "max_error": "9.857227e+02"
-    }
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.561165,
+      "triton_time_ms": 0.119641,
+      "speedup": 4.690406
+    },
+    "final_attempt": 2
   },
   "mvt": {
     "triton_generated": true,
     "test_passed": true,
     "attempts": 1,
-    "final_error": null
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.180969,
+      "triton_time_ms": 0.077997,
+      "speedup": 2.320209
+    },
+    "final_attempt": 1
   },
   "nussinov": {
     "triton_generated": true,
-    "test_passed": true,
-    "attempts": 1,
-    "final_error": null
+    "test_passed": false,
+    "attempts": 10,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 4:16:\ndef nussinov_kernel(seq_ptr, table_ptr, N, i_val):\n    # Block size for j dimension\n    BLOCK_SIZE = 32\n    j_offsets = tl.arange(0, BLOCK_SIZE)\n                ^\n  Test 2: ERROR - at 4:16:\ndef nussinov_kernel(seq_ptr, table_ptr, N, i_val):\n    # Block size for j dimension\n    BLOCK_SIZE = 32\n    j_offsets = tl.arange(0, BLOCK_SIZE)\n                ^\n  Test 3: ERROR - at 4:16:\ndef nussinov_kernel(seq_ptr, table_ptr, N, i_val):\n    # Block size for j dimension\n    BLOCK_SIZE = 32\n    j_offsets = tl.arange(0, BLOCK_SIZE)\n                ^\nSome tests FAILED!\n"
+    }
   },
   "seidel_2d": {
     "triton_generated": true,
     "test_passed": false,
-    "attempts": 5,
+    "attempts": 10,
     "final_error": {
-      "type": "numerical",
-      "message": "abs_error=2.585948e-02 rel_error=7.402124e-03",
-      "max_error": "2.585948e-02"
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 19:12:\n    i_base = pid_i * BLOCK_SIZE_I + 1\n    j_base = pid_j * BLOCK_SIZE_J + 1\n\n    i_indices = i_base + i_offsets\n    j_indices = j_base + j_offsets\n\n    i_mask = i_indices <= (N - 2)\n    j_mask = j_indices <= (N - 2)\n\n    for i_idx in range(BLOCK_SIZE_I):\n        if i_base + i_idx > N - 2:\n            continue\n            ^\nunsupported AST node type: Continue\n  Test 2: ERROR - at 19:12:\n    i_base = pid_i * BLOCK_SIZE_I + 1\n    j_base = pid_j * BLOCK_SIZE_J + 1\n\n    i_indices = i_base + i_offsets\n    j_indices = j_base + j_offsets\n\n    i_mask = i_indices <= (N - 2)\n    j_mask = j_indices <= (N - 2)\n\n    for i_idx in range(BLOCK_SIZE_I):\n        if i_base + i_idx > N - 2:\n            continue\n            ^\nunsupported AST node type: Continue\n  Test 3: ERROR - at 19:12:\n    i_base = pid_i * BLOCK_SIZE_I + 1\n    j_base = pid_j * BLOCK_SIZE_J + 1\n\n    i_indices = i_base + i_offsets\n    j_indices = j_base + j_offsets\n\n    i_mask = i_indices <= (N - 2)\n    j_mask = j_indices <= (N - 2)\n\n    for i_idx in range(BLOCK_SIZE_I):\n        if i_base + i_idx > N - 2:\n            continue\n            ^\nunsupported AST node type: Continue\nSome tests FAILED!\n"
     }
   },
   "symm": {
     "triton_generated": true,
-    "test_passed": true,
-    "attempts": 1,
-    "final_error": null
+    "test_passed": false,
+    "attempts": 10,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 20:16:\n    offsets_i = tl.arange(0, BLOCK_SIZE_I)\n    offsets_j = tl.arange(0, BLOCK_SIZE_J)\n\n    i_indices = block_start_i + offsets_i\n    j_indices = block_start_j + offsets_j\n\n    i_mask = i_indices < M\n    j_mask = j_indices < N\n\n    # Process each i,j pair in the block using vectorized approach\n    BLOCK_K = 16\n    k_offsets = tl.arange(0, BLOCK_K)\n                ^\n  Test 2: ERROR - at 20:16:\n    offsets_i = tl.arange(0, BLOCK_SIZE_I)\n    offsets_j = tl.arange(0, BLOCK_SIZE_J)\n\n    i_indices = block_start_i + offsets_i\n    j_indices = block_start_j + offsets_j\n\n    i_mask = i_indices < M\n    j_mask = j_indices < N\n\n    # Process each i,j pair in the block using vectorized approach\n    BLOCK_K = 16\n    k_offsets = tl.arange(0, BLOCK_K)\n                ^\n  Test 3: ERROR - at 20:16:\n    offsets_i = tl.arange(0, BLOCK_SIZE_I)\n    offsets_j = tl.arange(0, BLOCK_SIZE_J)\n\n    i_indices = block_start_i + offsets_i\n    j_indices = block_start_j + offsets_j\n\n    i_mask = i_indices < M\n    j_mask = j_indices < N\n\n    # Process each i,j pair in the block using vectorized approach\n    BLOCK_K = 16\n    k_offsets = tl.arange(0, BLOCK_K)\n                ^\nSome tests FAILED!\n"
+    }
   },
   "syr2k": {
     "triton_generated": true,
     "test_passed": true,
-    "attempts": 1,
-    "final_error": null
+    "attempts": 3,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 26:12:\n    i_indices = i_start + i_offsets\n    j_indices = j_start + j_offsets\n\n    # Create masks for valid indices\n    i_mask = i_indices < N\n    j_mask = j_indices < N\n\n    # For each i in this block\n    for i_local in range(BLOCK_SIZE_I):\n        i = i_start + i_local\n        if i >= N:\n            continue\n            ^\nunsupported AST node type: Continue\n  Test 2: ERROR - at 26:12:\n    i_indices = i_start + i_offsets\n    j_indices = j_start + j_offsets\n\n    # Create masks for valid indices\n    i_mask = i_indices < N\n    j_mask = j_indices < N\n\n    # For each i in this block\n    for i_local in range(BLOCK_SIZE_I):\n        i = i_start + i_local\n        if i >= N:\n            continue\n            ^\nunsupported AST node type: Continue\n  Test 3: ERROR - at 26:12:\n    i_indices = i_start + i_offsets\n    j_indices = j_start + j_offsets\n\n    # Create masks for valid indices\n    i_mask = i_indices < N\n    j_mask = j_indices < N\n\n    # For each i in this block\n    for i_local in range(BLOCK_SIZE_I):\n        i = i_start + i_local\n        if i >= N:\n            continue\n            ^\nunsupported AST node type: Continue\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.248506,
+      "triton_time_ms": 0.139507,
+      "speedup": 1.781315
+    },
+    "final_attempt": 3
   },
   "syrk": {
     "triton_generated": true,
     "test_passed": true,
     "attempts": 1,
-    "final_error": null
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.168563,
+      "triton_time_ms": 0.21829,
+      "speedup": 0.772197
+    },
+    "final_attempt": 1
   },
   "trisolv": {
     "triton_generated": true,
     "test_passed": true,
-    "attempts": 1,
+    "attempts": 10,
+    "final_attempt": 3,
+    "benchmark": {
+      "c_ref_time_ms": 0.12628,
+      "triton_time_ms": 1.651306,
+      "speedup": 0.076473
+    },
     "final_error": null
   },
   "trmm": {
     "triton_generated": true,
     "test_passed": true,
-    "attempts": 1,
-    "final_error": null
+    "attempts": 5,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 25:12:\n    i_mask = i_indices < M\n    j_mask = j_indices < N\n\n    # Load initial B[i, j] values\n    B_ptrs = B_ptr + i_indices[:, None] * stride_B_0 + j_indices[None, :] * stride_B_1\n    B_vals = tl.load(B_ptrs, mask=i_mask[:, None] & j_mask[None, :], other=0.0)\n\n    # For each i in the block\n    for i_block_idx in range(BLOCK_SIZE_I):\n        i_actual = i_start + i_block_idx\n        if i_actual >= M:\n            break\n            ^\nunsupported AST node type: Break\n  Test 2: ERROR - at 25:12:\n    i_mask = i_indices < M\n    j_mask = j_indices < N\n\n    # Load initial B[i, j] values\n    B_ptrs = B_ptr + i_indices[:, None] * stride_B_0 + j_indices[None, :] * stride_B_1\n    B_vals = tl.load(B_ptrs, mask=i_mask[:, None] & j_mask[None, :], other=0.0)\n\n    # For each i in the block\n    for i_block_idx in range(BLOCK_SIZE_I):\n        i_actual = i_start + i_block_idx\n        if i_actual >= M:\n            break\n            ^\nunsupported AST node type: Break\n  Test 3: ERROR - at 25:12:\n    i_mask = i_indices < M\n    j_mask = j_indices < N\n\n    # Load initial B[i, j] values\n    B_ptrs = B_ptr + i_indices[:, None] * stride_B_0 + j_indices[None, :] * stride_B_1\n    B_vals = tl.load(B_ptrs, mask=i_mask[:, None] & j_mask[None, :], other=0.0)\n\n    # For each i in the block\n    for i_block_idx in range(BLOCK_SIZE_I):\n        i_actual = i_start + i_block_idx\n        if i_actual >= M:\n            break\n            ^\nunsupported AST node type: Break\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.204453,
+      "triton_time_ms": 0.053112,
+      "speedup": 3.849454
+    },
+    "final_attempt": 5
   }
 }

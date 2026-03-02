@@ -10,7 +10,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton.mvt.attempt3 import mvt_triton
+    from polybench_results.llm_triton.mvt.attempt1 import mvt_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

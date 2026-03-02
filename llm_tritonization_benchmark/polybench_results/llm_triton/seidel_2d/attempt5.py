@@ -3,47 +3,47 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def seidel_2d_kernel(A, N, TSTEPS, BLOCK_SIZE: tl.constexpr):
-    offsets = tl.arange(0, BLOCK_SIZE)
+def seidel_2d_kernel(A, N, t, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
     
-    for t in range(TSTEPS):
-        for i in range(1, N - 1):
-            for block_start in range(1, N - 1, BLOCK_SIZE):
-                j_indices = block_start + offsets
-                mask = (j_indices >= 1) & (j_indices < N - 1)
-                
-                # Calculate linear indices for 9-point stencil
-                idx_center = i * N + j_indices
-                idx_top_left = (i - 1) * N + (j_indices - 1)
-                idx_top = (i - 1) * N + j_indices
-                idx_top_right = (i - 1) * N + (j_indices + 1)
-                idx_left = i * N + (j_indices - 1)
-                idx_right = i * N + (j_indices + 1)
-                idx_bottom_left = (i + 1) * N + (j_indices - 1)
-                idx_bottom = (i + 1) * N + j_indices
-                idx_bottom_right = (i + 1) * N + (j_indices + 1)
-                
-                # Load values
-                val_top_left = tl.load(A + idx_top_left, mask=mask)
-                val_top = tl.load(A + idx_top, mask=mask)
-                val_top_right = tl.load(A + idx_top_right, mask=mask)
-                val_left = tl.load(A + idx_left, mask=mask)
-                val_center = tl.load(A + idx_center, mask=mask)
-                val_right = tl.load(A + idx_right, mask=mask)
-                val_bottom_left = tl.load(A + idx_bottom_left, mask=mask)
-                val_bottom = tl.load(A + idx_bottom, mask=mask)
-                val_bottom_right = tl.load(A + idx_bottom_right, mask=mask)
-                
-                # Compute 9-point average
-                new_val = (val_top_left + val_top + val_top_right +
-                          val_left + val_center + val_right +
-                          val_bottom_left + val_bottom + val_bottom_right) / 9.0
-                
-                # Store result
-                tl.store(A + idx_center, new_val, mask=mask)
+    offsets = tl.arange(0, BLOCK_SIZE)
+    idx = pid * BLOCK_SIZE + offsets
+    
+    # Convert linear index to i, j coordinates
+    i = idx // (N - 2) + 1
+    j = idx % (N - 2) + 1
+    
+    # Mask for valid indices
+    mask = (idx < (N - 2) * (N - 2)) & (i >= 1) & (i <= N - 2) & (j >= 1) & (j <= N - 2)
+    
+    # Calculate linear indices for the 9-point stencil
+    base_idx = i * N + j
+    
+    # Load 9-point stencil values
+    v00 = tl.load(A + base_idx - N - 1, mask=mask, other=0.0)
+    v01 = tl.load(A + base_idx - N, mask=mask, other=0.0)
+    v02 = tl.load(A + base_idx - N + 1, mask=mask, other=0.0)
+    v10 = tl.load(A + base_idx - 1, mask=mask, other=0.0)
+    v11 = tl.load(A + base_idx, mask=mask, other=0.0)
+    v12 = tl.load(A + base_idx + 1, mask=mask, other=0.0)
+    v20 = tl.load(A + base_idx + N - 1, mask=mask, other=0.0)
+    v21 = tl.load(A + base_idx + N, mask=mask, other=0.0)
+    v22 = tl.load(A + base_idx + N + 1, mask=mask, other=0.0)
+    
+    # Compute average
+    result = (v00 + v01 + v02 + v10 + v11 + v12 + v20 + v21 + v22) / 9.0
+    
+    # Store result
+    tl.store(A + base_idx, result, mask=mask)
 
 def seidel_2d_triton(A, N, TSTEPS):
     BLOCK_SIZE = 256
-    grid = (1,)
     
-    seidel_2d_kernel[grid](A, N, TSTEPS, BLOCK_SIZE)
+    total_elements = (N - 2) * (N - 2)
+    grid = (triton.cdiv(total_elements, BLOCK_SIZE),)
+    
+    for t in range(TSTEPS):
+        seidel_2d_kernel[grid](
+            A, N, t,
+            BLOCK_SIZE=BLOCK_SIZE
+        )

@@ -10,7 +10,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton.fdtd_2d.attempt2 import fdtd_2d_triton
+    from polybench_results.llm_triton.fdtd_2d.attempt8 import fdtd_2d_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

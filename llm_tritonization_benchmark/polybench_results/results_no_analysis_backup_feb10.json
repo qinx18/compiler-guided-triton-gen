@@ -1,0 +1,238 @@
+{
+  "2mm": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 5,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=5.375671e-01 rel_error=1.607612e-03",
+      "max_error": "5.375671e-01"
+    }
+  },
+  "3mm": {
+    "triton_generated": true,
+    "test_passed": false,
+    "attempts": 5,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=4.522461e+00 rel_error=2.145711e-03",
+      "max_error": "4.522461e+00"
+    }
+  },
+  "adi": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "atax": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=1.815589e+02 rel_error=9.878136e-01",
+      "max_error": "1.815589e+02"
+    }
+  },
+  "bicg": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 4,
+    "final_error": {
+      "type": "unknown",
+      "message": ", mask=j_mask, other=0.0)\n\n            # Accumulate q[i] += A[i][j] * p[j]\n            products = A_vals * p_vals\n            q_sum += tl.sum(tl.where(j_mask, products, 0.0))\n\n            # Atomically update s[j] += r[i] * A[i][j]\n            s_updates = r_i * A_vals\n            for k in range(BLOCK_SIZE):\n                if j_start + k < M:\n                    tl.atomic_add(s_ptr + j_start + k, s_updates[k])\n                                                       ^\nValueError('Did you forget to add @triton.jit ? (`_builder` argument must be provided outside of JIT functions.)')\n  Test 2: ERROR - at 40:55:\n            # Load p[j] values\n            p_vals = tl.load(p_ptr + current_j_offsets, mask=j_mask, other=0.0)\n\n            # Accumulate q[i] += A[i][j] * p[j]\n            products = A_vals * p_vals\n            q_sum += tl.sum(tl.where(j_mask, products, 0.0))\n\n            # Atomically update s[j] += r[i] * A[i][j]\n            s_updates = r_i * A_vals\n            for k in range(BLOCK_SIZE):\n                if j_start + k < M:\n                    tl.atomic_add(s_ptr + j_start + k, s_updates[k])\n                                                       ^\nValueError('Did you forget to add @triton.jit ? (`_builder` argument must be provided outside of JIT functions.)')\n  Test 3: ERROR - at 40:55:\n            # Load p[j] values\n            p_vals = tl.load(p_ptr + current_j_offsets, mask=j_mask, other=0.0)\n\n            # Accumulate q[i] += A[i][j] * p[j]\n            products = A_vals * p_vals\n            q_sum += tl.sum(tl.where(j_mask, products, 0.0))\n\n            # Atomically update s[j] += r[i] * A[i][j]\n            s_updates = r_i * A_vals\n            for k in range(BLOCK_SIZE):\n                if j_start + k < M:\n                    tl.atomic_add(s_ptr + j_start + k, s_updates[k])\n                                                       ^\nValueError('Did you forget to add @triton.jit ? (`_builder` argument must be provided outside of JIT functions.)')\nSome tests FAILED!\n"
+    }
+  },
+  "cholesky": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "correlation": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "covariance": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "deriche": {
+    "triton_generated": true,
+    "test_passed": false,
+    "attempts": 5,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - module 'triton.language' has no attribute 'pow'\n  Test 2: ERROR - module 'triton.language' has no attribute 'pow'\n  Test 3: ERROR - module 'triton.language' has no attribute 'pow'\nSome tests FAILED!\n"
+    }
+  },
+  "doitgen": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=3.498756e+01 rel_error=1.428842e+00",
+      "max_error": "3.498756e+01"
+    }
+  },
+  "durbin": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "fdtd_2d": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 3,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=4.469899e+01 rel_error=7.920562e+00",
+      "max_error": "4.469899e+01"
+    }
+  },
+  "floyd_warshall": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "gemm": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "gemver": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "gesummv": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "gramschmidt": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "heat_3d": {
+    "triton_generated": true,
+    "test_passed": false,
+    "attempts": 5,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=1.117146e+00 rel_error=2.865127e-01",
+      "max_error": "1.117146e+00"
+    }
+  },
+  "jacobi_1d": {
+    "triton_generated": true,
+    "test_passed": false,
+    "attempts": 5,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=4.342235e-01 rel_error=3.789415e-01",
+      "max_error": "4.342235e-01"
+    }
+  },
+  "jacobi_2d": {
+    "triton_generated": true,
+    "test_passed": false,
+    "attempts": 5,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=1.306606e+00 rel_error=3.652519e-01",
+      "max_error": "1.306606e+00"
+    }
+  },
+  "lu": {
+    "triton_generated": true,
+    "test_passed": false,
+    "attempts": 5,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 7:19:\ndef lu_kernel(A_ptr, N, stride_0, stride_1, i_val):\n    # First nested loop: j < i\n    for j in range(i_val):\n        # Inner loop: k < j\n        sum_val = 0.0\n        for k in range(j):\n            a_ik = tl.load(A_ptr + i_val * stride_0 + k * stride_1)\n                   ^\n  Test 2: ERROR - at 7:19:\ndef lu_kernel(A_ptr, N, stride_0, stride_1, i_val):\n    # First nested loop: j < i\n    for j in range(i_val):\n        # Inner loop: k < j\n        sum_val = 0.0\n        for k in range(j):\n            a_ik = tl.load(A_ptr + i_val * stride_0 + k * stride_1)\n                   ^\n  Test 3: ERROR - at 7:19:\ndef lu_kernel(A_ptr, N, stride_0, stride_1, i_val):\n    # First nested loop: j < i\n    for j in range(i_val):\n        # Inner loop: k < j\n        sum_val = 0.0\n        for k in range(j):\n            a_ik = tl.load(A_ptr + i_val * stride_0 + k * stride_1)\n                   ^\nSome tests FAILED!\n"
+    }
+  },
+  "ludcmp": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "mvt": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "nussinov": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "seidel_2d": {
+    "triton_generated": true,
+    "test_passed": false,
+    "attempts": 5,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=3.147760e-02 rel_error=9.649495e-03",
+      "max_error": "3.147760e-02"
+    }
+  },
+  "symm": {
+    "triton_generated": true,
+    "test_passed": false,
+    "attempts": 5,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=3.774380e+01 rel_error=8.005810e-01",
+      "max_error": "3.774380e+01"
+    }
+  },
+  "syr2k": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "syrk": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "trisolv": {
+    "triton_generated": true,
+    "test_passed": false,
+    "attempts": 5,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=8.463673e+35 rel_error=1.000000e+00",
+      "max_error": "8.463673e+35"
+    }
+  },
+  "trmm": {
+    "triton_generated": true,
+    "test_passed": false,
+    "attempts": 5,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 25:28:\n    i_mask = i_offsets < M\n    j_mask = j_offsets < N\n\n    # Load initial B values\n    b_ptrs = B_ptr + i_offsets[:, None] * stride_B_0 + j_offsets[None, :] * stride_B_1\n    mask = i_mask[:, None] & j_mask[None, :]\n    result = tl.load(b_ptrs, mask=mask, other=0.0)\n\n    # Process k values\n    k_offsets = tl.arange(0, BLOCK_I)\n\n    for k_block in range(0, triton.cdiv(M, BLOCK_I)):\n                            ^\nValueError('Did you forget to add @triton.jit ? (`_builder` argument must be provided outside of JIT functions.)')\n  Test 2: ERROR - at 25:28:\n    i_mask = i_offsets < M\n    j_mask = j_offsets < N\n\n    # Load initial B values\n    b_ptrs = B_ptr + i_offsets[:, None] * stride_B_0 + j_offsets[None, :] * stride_B_1\n    mask = i_mask[:, None] & j_mask[None, :]\n    result = tl.load(b_ptrs, mask=mask, other=0.0)\n\n    # Process k values\n    k_offsets = tl.arange(0, BLOCK_I)\n\n    for k_block in range(0, triton.cdiv(M, BLOCK_I)):\n                            ^\nValueError('Did you forget to add @triton.jit ? (`_builder` argument must be provided outside of JIT functions.)')\n  Test 3: ERROR - at 25:28:\n    i_mask = i_offsets < M\n    j_mask = j_offsets < N\n\n    # Load initial B values\n    b_ptrs = B_ptr + i_offsets[:, None] * stride_B_0 + j_offsets[None, :] * stride_B_1\n    mask = i_mask[:, None] & j_mask[None, :]\n    result = tl.load(b_ptrs, mask=mask, other=0.0)\n\n    # Process k values\n    k_offsets = tl.arange(0, BLOCK_I)\n\n    for k_block in range(0, triton.cdiv(M, BLOCK_I)):\n                            ^\nValueError('Did you forget to add @triton.jit ? (`_builder` argument must be provided outside of JIT functions.)')\nSome tests FAILED!\n"
+    }
+  }
+}

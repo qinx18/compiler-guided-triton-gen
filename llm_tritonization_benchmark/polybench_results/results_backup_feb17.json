@@ -1,0 +1,248 @@
+{
+  "2mm": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "3mm": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "adi": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "atax": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "bicg": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "cholesky": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 20:32:\n            # Initialize A[i][j] values\n            a_ij_offsets = i * N + j_idx\n            a_ij_vals = tl.load(A_copy_ptr + a_ij_offsets, mask=j_mask, other=0.0)\n\n            # Inner k loop: A[i][j] -= A[i][k] * A[j][k]\n            for k in range(i):\n                k_mask = (j_idx < i) & (j_idx < N) & (k < j_idx)\n                if tl.sum(k_mask.to(tl.int32)) > 0:\n                    a_ik_offsets = i * N + k\n                    a_jk_offsets = j_idx * N + k\n\n                    a_ik_vals = tl.load(A_copy_ptr + a_ik_offsets, mask=k_mask, other=0.0)\n                                ^\n  Test 2: ERROR - at 20:32:\n            # Initialize A[i][j] values\n            a_ij_offsets = i * N + j_idx\n            a_ij_vals = tl.load(A_copy_ptr + a_ij_offsets, mask=j_mask, other=0.0)\n\n            # Inner k loop: A[i][j] -= A[i][k] * A[j][k]\n            for k in range(i):\n                k_mask = (j_idx < i) & (j_idx < N) & (k < j_idx)\n                if tl.sum(k_mask.to(tl.int32)) > 0:\n                    a_ik_offsets = i * N + k\n                    a_jk_offsets = j_idx * N + k\n\n                    a_ik_vals = tl.load(A_copy_ptr + a_ik_offsets, mask=k_mask, other=0.0)\n                                ^\n  Test 3: ERROR - at 20:32:\n            # Initialize A[i][j] values\n            a_ij_offsets = i * N + j_idx\n            a_ij_vals = tl.load(A_copy_ptr + a_ij_offsets, mask=j_mask, other=0.0)\n\n            # Inner k loop: A[i][j] -= A[i][k] * A[j][k]\n            for k in range(i):\n                k_mask = (j_idx < i) & (j_idx < N) & (k < j_idx)\n                if tl.sum(k_mask.to(tl.int32)) > 0:\n                    a_ik_offsets = i * N + k\n                    a_jk_offsets = j_idx * N + k\n\n                    a_ik_vals = tl.load(A_copy_ptr + a_ik_offsets, mask=k_mask, other=0.0)\n                                ^\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.334896,
+      "triton_time_ms": 0.434009,
+      "speedup": 0.771633
+    },
+    "final_attempt": 2
+  },
+  "correlation": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "covariance": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "deriche": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "doitgen": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 38:20:\n            current_s_offsets = s_start + s_offsets\n            s_mask = current_s_offsets < NP\n\n            # Load A[r][q][s] values\n            a_indices = r * (NQ * NP) + q * NP + current_s_offsets\n            a_vals = tl.load(A + a_indices, mask=s_mask, other=0.0)\n\n            # For each p in the current block, accumulate over all s\n            for p_idx in range(BLOCK_SIZE_P):\n                p_actual = p_start + p_idx\n                if p_actual >= NP:\n                    break\n                    ^\nunsupported AST node type: Break\n  Test 2: ERROR - at 38:20:\n            current_s_offsets = s_start + s_offsets\n            s_mask = current_s_offsets < NP\n\n            # Load A[r][q][s] values\n            a_indices = r * (NQ * NP) + q * NP + current_s_offsets\n            a_vals = tl.load(A + a_indices, mask=s_mask, other=0.0)\n\n            # For each p in the current block, accumulate over all s\n            for p_idx in range(BLOCK_SIZE_P):\n                p_actual = p_start + p_idx\n                if p_actual >= NP:\n                    break\n                    ^\nunsupported AST node type: Break\n  Test 3: ERROR - at 38:20:\n            current_s_offsets = s_start + s_offsets\n            s_mask = current_s_offsets < NP\n\n            # Load A[r][q][s] values\n            a_indices = r * (NQ * NP) + q * NP + current_s_offsets\n            a_vals = tl.load(A + a_indices, mask=s_mask, other=0.0)\n\n            # For each p in the current block, accumulate over all s\n            for p_idx in range(BLOCK_SIZE_P):\n                p_actual = p_start + p_idx\n                if p_actual >= NP:\n                    break\n                    ^\nunsupported AST node type: Break\nSome tests FAILED!\n"
+    }
+  },
+  "durbin": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "fdtd_2d": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "floyd_warshall": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=6.960435e-01 rel_error=1.421691e-01",
+      "max_error": "6.960435e-01"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 1.115837,
+      "triton_time_ms": 3.27129,
+      "speedup": 0.3411
+    },
+    "final_attempt": 2
+  },
+  "gemm": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "gemver": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "gesummv": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "gramschmidt": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 6,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 22:4:\n    # Compute R[k][j] = sum(Q[i][k] * A[i][j])\n    dot_sum = tl.zeros([1], dtype=tl.float32)\n\n    for row_start in range(0, M, BLOCK_M):\n        current_rows = row_start + row_offsets\n        row_mask = current_rows < M\n\n        q_vals = tl.load(Q_ptr + current_rows * Q_stride0 + k * Q_stride1, mask=row_mask, other=0.0)\n        a_vals = tl.load(A_ptr + current_rows * A_stride0 + j * A_stride1, mask=row_mask, other=0.0)\n        dot_sum += tl.sum(q_vals * a_vals)\n\n    tl.store(R_ptr + k * R_stride0 + j * R_stride1, dot_sum)\n    ^\n  Test 2: ERROR - at 22:4:\n    # Compute R[k][j] = sum(Q[i][k] * A[i][j])\n    dot_sum = tl.zeros([1], dtype=tl.float32)\n\n    for row_start in range(0, M, BLOCK_M):\n        current_rows = row_start + row_offsets\n        row_mask = current_rows < M\n\n        q_vals = tl.load(Q_ptr + current_rows * Q_stride0 + k * Q_stride1, mask=row_mask, other=0.0)\n        a_vals = tl.load(A_ptr + current_rows * A_stride0 + j * A_stride1, mask=row_mask, other=0.0)\n        dot_sum += tl.sum(q_vals * a_vals)\n\n    tl.store(R_ptr + k * R_stride0 + j * R_stride1, dot_sum)\n    ^\n  Test 3: ERROR - at 22:4:\n    # Compute R[k][j] = sum(Q[i][k] * A[i][j])\n    dot_sum = tl.zeros([1], dtype=tl.float32)\n\n    for row_start in range(0, M, BLOCK_M):\n        current_rows = row_start + row_offsets\n        row_mask = current_rows < M\n\n        q_vals = tl.load(Q_ptr + current_rows * Q_stride0 + k * Q_stride1, mask=row_mask, other=0.0)\n        a_vals = tl.load(A_ptr + current_rows * A_stride0 + j * A_stride1, mask=row_mask, other=0.0)\n        dot_sum += tl.sum(q_vals * a_vals)\n\n    tl.store(R_ptr + k * R_stride0 + j * R_stride1, dot_sum)\n    ^\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.474153,
+      "triton_time_ms": 1.789547,
+      "speedup": 0.264957
+    },
+    "final_attempt": 6
+  },
+  "heat_3d": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "jacobi_1d": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "jacobi_2d": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "lu": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 6,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=3.547325e+14 rel_error=2.892918e+12",
+      "max_error": "3.547325e+14"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.515209,
+      "triton_time_ms": 1.539151,
+      "speedup": 0.334736
+    },
+    "final_attempt": 6
+  },
+  "ludcmp": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.587867,
+      "triton_time_ms": 3.828362,
+      "speedup": 0.153556
+    },
+    "final_attempt": 1
+  },
+  "mvt": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "nussinov": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 10,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - module 'triton.language' has no attribute 'any'\n  Test 2: ERROR - module 'triton.language' has no attribute 'any'\n  Test 3: ERROR - module 'triton.language' has no attribute 'any'\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.835209,
+      "triton_time_ms": 9.676944,
+      "speedup": 0.086309
+    },
+    "final_attempt": 10
+  },
+  "seidel_2d": {
+    "triton_generated": true,
+    "test_passed": false,
+    "attempts": 10,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=8.068081e-02 rel_error=2.510012e-02",
+      "max_error": "8.068081e-02"
+    }
+  },
+  "symm": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "syr2k": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "syrk": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  },
+  "trisolv": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 10,
+    "final_attempt": 7,
+    "benchmark": {
+      "c_ref_time_ms": 0.132071,
+      "triton_time_ms": 1.625636,
+      "speedup": 0.081243
+    },
+    "final_error": null
+  },
+  "trmm": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null
+  }
+}

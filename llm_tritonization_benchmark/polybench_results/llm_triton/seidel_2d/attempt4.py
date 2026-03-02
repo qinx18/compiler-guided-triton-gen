@@ -3,46 +3,58 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def seidel_2d_kernel(A, N, TSTEPS, BLOCK_SIZE: tl.constexpr):
+def seidel_2d_kernel(A, N, TSTEPS, BLOCK_SIZE_I: tl.constexpr, BLOCK_SIZE_J: tl.constexpr):
+    pid_i = tl.program_id(0)
+    pid_j = tl.program_id(1)
+    
+    i_offsets = tl.arange(0, BLOCK_SIZE_I)
+    j_offsets = tl.arange(0, BLOCK_SIZE_J)
+    
+    i_base = 1 + pid_i * BLOCK_SIZE_I
+    j_base = 1 + pid_j * BLOCK_SIZE_J
+    
+    i_indices = i_base + i_offsets
+    j_indices = j_base + j_offsets
+    
+    i_mask = (i_indices >= 1) & (i_indices <= N - 2)
+    j_mask = (j_indices >= 1) & (j_indices <= N - 2)
+    
     for t in range(TSTEPS):
-        for i in range(1, N - 1):
-            offsets = tl.arange(0, BLOCK_SIZE)
-            for block_start in range(1, N - 1, BLOCK_SIZE):
-                j_indices = block_start + offsets
-                mask = j_indices < N - 1
-                
-                # Calculate linear indices for 9-point stencil
-                idx_center = i * N + j_indices
-                idx_top_left = (i - 1) * N + (j_indices - 1)
-                idx_top = (i - 1) * N + j_indices
-                idx_top_right = (i - 1) * N + (j_indices + 1)
-                idx_left = i * N + (j_indices - 1)
-                idx_right = i * N + (j_indices + 1)
-                idx_bottom_left = (i + 1) * N + (j_indices - 1)
-                idx_bottom = (i + 1) * N + j_indices
-                idx_bottom_right = (i + 1) * N + (j_indices + 1)
-                
-                # Load values
-                val_top_left = tl.load(A + idx_top_left, mask=mask)
-                val_top = tl.load(A + idx_top, mask=mask)
-                val_top_right = tl.load(A + idx_top_right, mask=mask)
-                val_left = tl.load(A + idx_left, mask=mask)
-                val_center = tl.load(A + idx_center, mask=mask)
-                val_right = tl.load(A + idx_right, mask=mask)
-                val_bottom_left = tl.load(A + idx_bottom_left, mask=mask)
-                val_bottom = tl.load(A + idx_bottom, mask=mask)
-                val_bottom_right = tl.load(A + idx_bottom_right, mask=mask)
-                
-                # Compute 9-point average
-                new_val = (val_top_left + val_top + val_top_right +
-                          val_left + val_center + val_right +
-                          val_bottom_left + val_bottom + val_bottom_right) / 9.0
-                
-                # Store result
-                tl.store(A + idx_center, new_val, mask=mask)
+        i_expanded = i_indices[:, None]
+        j_expanded = j_indices[None, :]
+        
+        mask = i_mask[:, None] & j_mask[None, :]
+        
+        # Create pointers for the 9-point stencil
+        base_ptr = A + i_expanded * N + j_expanded
+        
+        # Load 9-point stencil
+        v00 = tl.load(base_ptr + (-1) * N + (-1), mask=mask, other=0.0)
+        v01 = tl.load(base_ptr + (-1) * N + 0, mask=mask, other=0.0)
+        v02 = tl.load(base_ptr + (-1) * N + 1, mask=mask, other=0.0)
+        v10 = tl.load(base_ptr + 0 * N + (-1), mask=mask, other=0.0)
+        v11 = tl.load(base_ptr + 0 * N + 0, mask=mask, other=0.0)
+        v12 = tl.load(base_ptr + 0 * N + 1, mask=mask, other=0.0)
+        v20 = tl.load(base_ptr + 1 * N + (-1), mask=mask, other=0.0)
+        v21 = tl.load(base_ptr + 1 * N + 0, mask=mask, other=0.0)
+        v22 = tl.load(base_ptr + 1 * N + 1, mask=mask, other=0.0)
+        
+        # Compute average
+        result = (v00 + v01 + v02 + v10 + v11 + v12 + v20 + v21 + v22) / 9.0
+        
+        # Store result
+        tl.store(base_ptr, result, mask=mask)
 
 def seidel_2d_triton(A, N, TSTEPS):
-    BLOCK_SIZE = 256
-    grid = (1,)
+    BLOCK_SIZE_I = 16
+    BLOCK_SIZE_J = 16
     
-    seidel_2d_kernel[grid](A, N, TSTEPS, BLOCK_SIZE)
+    grid_i = triton.cdiv(N - 2, BLOCK_SIZE_I)
+    grid_j = triton.cdiv(N - 2, BLOCK_SIZE_J)
+    
+    grid = (grid_i, grid_j)
+    seidel_2d_kernel[grid](
+        A, N, TSTEPS,
+        BLOCK_SIZE_I=BLOCK_SIZE_I,
+        BLOCK_SIZE_J=BLOCK_SIZE_J
+    )

@@ -1,0 +1,202 @@
+
+## PREVIOUS ATTEMPT FAILED - NUMERICAL ERROR
+
+Your last attempt produced incorrect numerical results.
+
+**Error type**: Numerical error (values don't match)
+**Max error observed**: 3.085419e-02
+
+Please fix the numerical computation. Common causes:
+- Incorrect loop bounds or indices
+- Wrong array access patterns (row-major vs column-major)
+- Missing or incorrect operations
+- Off-by-one errors
+- Cloning input arrays instead of modifying them in-place (the test checks the original tensors)
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import triton
+import triton.language as tl
+
+@triton.jit
+def seidel_2d_kernel(A_ptr, N, t_start, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    
+    i_base = (pid * BLOCK_SIZE) + 1
+    i_offsets = tl.arange(0, BLOCK_SIZE)
+    i_indices = i_base + i_offsets
+    
+    i_mask = (i_indices >= 1) & (i_indices <= (N - 2))
+    
+    for j in range(1, N - 1):
+        # Calculate linear indices for the 3x3 stencil
+        idx_center = i_indices * N + j
+        idx_top_left = (i_indices - 1) * N + (j - 1)
+        idx_top_center = (i_indices - 1) * N + j
+        idx_top_right = (i_indices - 1) * N + (j + 1)
+        idx_mid_left = i_indices * N + (j - 1)
+        idx_mid_right = i_indices * N + (j + 1)
+        idx_bottom_left = (i_indices + 1) * N + (j - 1)
+        idx_bottom_center = (i_indices + 1) * N + j
+        idx_bottom_right = (i_indices + 1) * N + (j + 1)
+        
+        # Load all 9 values
+        val_top_left = tl.load(A_ptr + idx_top_left, mask=i_mask, other=0.0)
+        val_top_center = tl.load(A_ptr + idx_top_center, mask=i_mask, other=0.0)
+        val_top_right = tl.load(A_ptr + idx_top_right, mask=i_mask, other=0.0)
+        val_mid_left = tl.load(A_ptr + idx_mid_left, mask=i_mask, other=0.0)
+        val_center = tl.load(A_ptr + idx_center, mask=i_mask, other=0.0)
+        val_mid_right = tl.load(A_ptr + idx_mid_right, mask=i_mask, other=0.0)
+        val_bottom_left = tl.load(A_ptr + idx_bottom_left, mask=i_mask, other=0.0)
+        val_bottom_center = tl.load(A_ptr + idx_bottom_center, mask=i_mask, other=0.0)
+        val_bottom_right = tl.load(A_ptr + idx_bottom_right, mask=i_mask, other=0.0)
+        
+        # Compute average of 9 values
+        result = (val_top_left + val_top_center + val_top_right +
+                 val_mid_left + val_center + val_mid_right +
+                 val_bottom_left + val_bottom_center + val_bottom_right) / 9.0
+        
+        # Store result
+        tl.store(A_ptr + idx_center, result, mask=i_mask)
+
+def seidel_2d_triton(A, N, TSTEPS):
+    BLOCK_SIZE = 32
+    
+    for t in range(TSTEPS):
+        grid_size = triton.cdiv(N - 2, BLOCK_SIZE)
+        grid = (grid_size,)
+        
+        seidel_2d_kernel[grid](A, N, t, BLOCK_SIZE)
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define TSTEPS 40
+#define N 120
+
+float A[N][N];
+
+void seidel_2d_kernel() {
+  int t, i, j;
+#pragma scop
+  for (t = 0; t <= TSTEPS - 1; t++)
+    for (i = 1; i<= N - 2; i++)
+      for (j = 1; j <= N - 2; j++)
+	A[i][j] = (A[i-1][j-1] + A[i-1][j] + A[i-1][j+1]
+		   + A[i][j-1] + A[i][j] + A[i][j+1]
+		   + A[i+1][j-1] + A[i+1][j] + A[i+1][j+1])/9.0;
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (t = 0; t <= TSTEPS - 1; t++)
+    for (i = 1; i<= N - 2; i++)
+      for (j = 1; j <= N - 2; j++)
+	A[i][j] = (A[i-1][j-1] + A[i-1][j] + A[i-1][j+1]
+		   + A[i][j-1] + A[i][j] + A[i][j+1]
+		   + A[i+1][j-1] + A[i+1][j] + A[i+1][j+1])/9.0;
+```
+
+## WAR (Write-After-Read) Dependencies
+
+**Note**: This kernel has WAR (Write-After-Read) dependencies.
+If you split the computation into **separate Triton kernels** launched sequentially, kernel launch barriers handle these dependencies naturally — no cloning needed.
+Cloning is only needed if reads and writes to the same array happen **within a single kernel**.
+
+**Arrays with WAR dependencies**: A
+- Read A[(-1 + i), (-1 + j)] may conflict with Write A[(i), (j)] from different iteration
+- Read A[(-1 + i), (j)] may conflict with Write A[(i), (j)] from different iteration
+- Read A[(-1 + i), (1 + j)] may conflict with Write A[(i), (j)] from different iteration
+- Read A[(i), (-1 + j)] may conflict with Write A[(i), (j)] from different iteration
+- Read A[(i), (1 + j)] may conflict with Write A[(i), (j)] from different iteration
+
+**If using a single kernel**: Create read-only copies before the parallel region:
+```python
+A_copy = A.clone()  # Read from copy, write to original
+```
+**If using separate kernels**: No cloning needed — launch one kernel per phase.
+
+
+## Parallelization Analysis
+
+**Loop dimensions**: ['t', 'i']
+
+- Parallelize `t`, sequential `i`: VALID
+  - Data dependencies detected - verify t is safe to parallelize
+
+- Parallelize `i`, sequential `t`: VALID
+  - Data dependencies detected - verify i is safe to parallelize
+
+**Both `t` and `i` are freely parallelizable.** Use a 2D grid to parallelize both simultaneously for best GPU occupancy.
+
+
+## Array Information:
+- `A`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `N` = 120
+- `TSTEPS` = 40
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `seidel_2d_kernel`
+2. Includes a Python wrapper function named `seidel_2d_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def seidel_2d_triton(A, N, TSTEPS):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 10 of 10. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

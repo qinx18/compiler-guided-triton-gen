@@ -36,7 +36,8 @@ def benchmark():
     num_warmup = 5
     num_iterations = 50
 
-    A = torch.randn(120, 120, device='cuda', dtype=torch.float32)
+    # Diagonally dominant for stable pivotless LU
+    A = torch.randn(120, 120, device='cuda', dtype=torch.float32) + 120 * torch.eye(120, device='cuda', dtype=torch.float32)
     N = 120
 
     # C reference benchmark

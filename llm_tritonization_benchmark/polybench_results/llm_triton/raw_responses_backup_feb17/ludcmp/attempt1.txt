@@ -1,0 +1,326 @@
+# LLM-Generated Triton Implementation for ludcmp (Polybench)
+# Generated: 2026-02-17 18:42:07
+# Model: claude-sonnet-4-20250514
+
+================================================================================
+PROMPT:
+================================================================================
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define N 120
+
+float b[N];
+float x[N];
+float y[N];
+float A[N][N];
+
+// Local variables from kernel function
+float w;
+
+void ludcmp_kernel() {
+  int i, j, k;
+#pragma scop
+  for (i = 0; i < N; i++) {
+    for (j = 0; j <i; j++) {
+       w = A[i][j];
+       for (k = 0; k < j; k++) {
+          w -= A[i][k] * A[k][j];
+       }
+        A[i][j] = w / A[j][j];
+    }
+   for (j = i; j < N; j++) {
+       w = A[i][j];
+       for (k = 0; k < i; k++) {
+          w -= A[i][k] * A[k][j];
+       }
+       A[i][j] = w;
+    }
+  }
+
+  for (i = 0; i < N; i++) {
+     w = b[i];
+     for (j = 0; j < i; j++)
+        w -= A[i][j] * y[j];
+     y[i] = w;
+  }
+
+   for (i = N-1; i >=0; i--) {
+     w = y[i];
+     for (j = i+1; j < N; j++)
+        w -= A[i][j] * x[j];
+     x[i] = w / A[i][i];
+  }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (i = 0; i < N; i++) {
+    for (j = 0; j <i; j++) {
+       w = A[i][j];
+       for (k = 0; k < j; k++) {
+          w -= A[i][k] * A[k][j];
+       }
+        A[i][j] = w / A[j][j];
+    }
+   for (j = i; j < N; j++) {
+       w = A[i][j];
+       for (k = 0; k < i; k++) {
+          w -= A[i][k] * A[k][j];
+       }
+       A[i][j] = w;
+    }
+  }
+
+  for (i = 0; i < N; i++) {
+     w = b[i];
+     for (j = 0; j < i; j++)
+        w -= A[i][j] * y[j];
+     y[i] = w;
+  }
+
+   for (i = N-1; i >=0; i--) {
+     w = y[i];
+     for (j = i+1; j < N; j++)
+        w -= A[i][j] * x[j];
+     x[i] = w / A[i][i];
+  }
+```
+
+## Parallelization Analysis
+
+**Loop dimensions**: ['i', 'j']
+**Triangular bounds**: j < i
+
+- Parallelize `j`, sequential `i`: VALID
+
+- Parallelize `i`, sequential `j`: VALID
+
+
+## GPU Parallelization Strategy: Inner-Loop Vectorization
+
+**Key insight**: The outer loop has loop-carried dependencies and MUST be sequential. But the inner triangular reduction can be vectorized with `tl.arange()` + `tl.sum()`.
+
+**CRITICAL**: Do NOT try to parallelize the outer loop. Instead, use a SINGLE program (grid=(1,)) but vectorize all inner-loop reductions using Triton vector operations.
+
+### Phase 1: Outer `i` (forward, from 0 to N), inner `j` (up to i)
+
+- Body type: dot_product
+- Accumulator: `w`
+- Arrays involved: `A`
+
+### Phase 2: Outer `i` (forward, from 0 to N), inner `k` (up to i)
+
+- Body type: dot_product
+- Accumulator: `w`
+- Arrays involved: `A`
+
+### Phase 3: Outer `i` (forward, from 0 to N), inner `k` (up to i)
+
+- Body type: dot_product
+- Accumulator: `w`
+- Arrays involved: `A`
+
+### Phase 4: Outer `i` (forward, from 0 to N), inner `j` (up to i)
+
+- Body type: dot_product
+- Accumulator: `w`
+- Arrays involved: `A`, `y`
+
+### Phase 5: Outer `j` (forward, from 0 to i), inner `k` (up to j)
+
+- Body type: dot_product
+- Accumulator: `w`
+- Arrays involved: `A`
+
+### Recommended Triton Pattern
+
+```python
+@triton.jit
+def ludcmp_kernel(
+    # ... array pointers and dimensions ...
+    BLOCK_J: tl.constexpr,  # e.g., 128
+):
+    j_offsets = tl.arange(0, BLOCK_J)  # Define ONCE outside all loops
+    for i in range(N):
+        # Load accumulator
+        acc = tl.load(...)  # Load w
+        # Vectorized inner reduction over j
+        for j_start in range(0, i, BLOCK_J):
+            j = j_start + j_offsets
+            j_mask = j < i
+            # Load vector of values, multiply, reduce
+            vals_a = tl.load(ptr_a + ..., mask=j_mask, other=0.0)
+            vals_b = tl.load(ptr_b + j, mask=j_mask, other=0.0)
+            acc -= tl.sum(vals_a * vals_b)  # Vectorized dot product
+        tl.store(...)  # Store result
+```
+
+**Block size**: Use `BLOCK_J=128` for good throughput on triangular reductions.
+**Grid**: `grid=(1,)` — single program instance since outer loop is sequential.
+
+
+
+## Array Information:
+- `A`: temporary scratch (read-write, not checked for correctness)
+- `b`: read-only
+- `x`: read-write
+- `y`: temporary scratch (read-write, not checked for correctness)
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `N` = 120
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `ludcmp_kernel`
+2. Includes a Python wrapper function named `ludcmp_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def ludcmp_triton(A, b, x, y, N):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+================================================================================
+RESPONSE:
+================================================================================
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def ludcmp_kernel(
+    A_ptr, b_ptr, x_ptr, y_ptr,
+    N,
+    BLOCK_SIZE: tl.constexpr,
+):
+    # LU decomposition - first two loops (sequential in i)
+    for i in range(N):
+        # First inner loop: j < i
+        for j in range(i):
+            w = tl.load(A_ptr + i * N + j)
+            
+            # Vectorized reduction over k < j
+            k_offsets = tl.arange(0, BLOCK_SIZE)
+            acc = 0.0
+            for k_start in range(0, j, BLOCK_SIZE):
+                k = k_start + k_offsets
+                k_mask = k < j
+                a_ik = tl.load(A_ptr + i * N + k, mask=k_mask, other=0.0)
+                a_kj = tl.load(A_ptr + k * N + j, mask=k_mask, other=0.0)
+                acc += tl.sum(a_ik * a_kj, axis=0)
+            
+            w = w - acc
+            a_jj = tl.load(A_ptr + j * N + j)
+            tl.store(A_ptr + i * N + j, w / a_jj)
+        
+        # Second inner loop: j >= i
+        for j in range(i, N):
+            w = tl.load(A_ptr + i * N + j)
+            
+            # Vectorized reduction over k < i
+            k_offsets = tl.arange(0, BLOCK_SIZE)
+            acc = 0.0
+            for k_start in range(0, i, BLOCK_SIZE):
+                k = k_start + k_offsets
+                k_mask = k < i
+                a_ik = tl.load(A_ptr + i * N + k, mask=k_mask, other=0.0)
+                a_kj = tl.load(A_ptr + k * N + j, mask=k_mask, other=0.0)
+                acc += tl.sum(a_ik * a_kj, axis=0)
+            
+            w = w - acc
+            tl.store(A_ptr + i * N + j, w)
+    
+    # Forward substitution
+    for i in range(N):
+        w = tl.load(b_ptr + i)
+        
+        # Vectorized reduction over j < i
+        j_offsets = tl.arange(0, BLOCK_SIZE)
+        acc = 0.0
+        for j_start in range(0, i, BLOCK_SIZE):
+            j = j_start + j_offsets
+            j_mask = j < i
+            a_ij = tl.load(A_ptr + i * N + j, mask=j_mask, other=0.0)
+            y_j = tl.load(y_ptr + j, mask=j_mask, other=0.0)
+            acc += tl.sum(a_ij * y_j, axis=0)
+        
+        w = w - acc
+        tl.store(y_ptr + i, w)
+    
+    # Backward substitution
+    for i in range(N-1, -1, -1):
+        w = tl.load(y_ptr + i)
+        
+        # Vectorized reduction over j > i
+        j_offsets = tl.arange(0, BLOCK_SIZE)
+        acc = 0.0
+        for j_start in range(i+1, N, BLOCK_SIZE):
+            j = j_start + j_offsets
+            j_mask = j < N
+            a_ij = tl.load(A_ptr + i * N + j, mask=j_mask, other=0.0)
+            x_j = tl.load(x_ptr + j, mask=j_mask, other=0.0)
+            acc += tl.sum(a_ij * x_j, axis=0)
+        
+        w = w - acc
+        a_ii = tl.load(A_ptr + i * N + i)
+        tl.store(x_ptr + i, w / a_ii)
+
+def ludcmp_triton(A, b, x, y, N):
+    BLOCK_SIZE = 128
+    
+    grid = (1,)
+    ludcmp_kernel[grid](
+        A, b, x, y,
+        N,
+        BLOCK_SIZE=BLOCK_SIZE,
+    )
+```

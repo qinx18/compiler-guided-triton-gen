@@ -1,0 +1,191 @@
+# LLM-Generated Triton Implementation for doitgen (Polybench)
+# Generated: 2026-03-02 03:06:30
+# Model: claude-sonnet-4-20250514
+
+================================================================================
+PROMPT:
+================================================================================
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define NR 25
+#define NQ 20
+#define NP 30
+
+float sum[NP];
+float C4[NP][NP];
+float A[NR][NQ][NP];
+
+void doitgen_kernel() {
+  int r, q, p, s;
+#pragma scop
+  for (r = 0; r < NR; r++)
+    for (q = 0; q < NQ; q++)  {
+      for (p = 0; p < NP; p++)  {
+	sum[p] = 0.0;
+	for (s = 0; s < NP; s++)
+	  sum[p] += A[r][q][s] * C4[s][p];
+      }
+      for (p = 0; p < NP; p++)
+	A[r][q][p] = sum[p];
+    }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (r = 0; r < NR; r++)
+    for (q = 0; q < NQ; q++)  {
+      for (p = 0; p < NP; p++)  {
+	sum[p] = 0.0;
+	for (s = 0; s < NP; s++)
+	  sum[p] += A[r][q][s] * C4[s][p];
+      }
+      for (p = 0; p < NP; p++)
+	A[r][q][p] = sum[p];
+    }
+```
+
+
+## Array Information:
+- `A`: read-write
+- `C4`: read-only
+- `sum`: temporary scratch (read-write, not checked for correctness)
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `NP` = 30
+- `NQ` = 20
+- `NR` = 25
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `doitgen_kernel`
+2. Includes a Python wrapper function named `doitgen_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def doitgen_triton(A, C4, sum, NP, NQ, NR):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+================================================================================
+RESPONSE:
+================================================================================
+```python
+import torch
+import triton
+import triton.language as tl
+
+@triton.jit
+def doitgen_kernel(A_ptr, C4_ptr, sum_ptr, NP: tl.constexpr, NQ: tl.constexpr, NR: tl.constexpr,
+                   BLOCK_SIZE_P: tl.constexpr):
+    # Get program IDs for r and q dimensions
+    pid_r = tl.program_id(0)
+    pid_q = tl.program_id(1)
+    
+    # Check bounds
+    if pid_r >= NR or pid_q >= NQ:
+        return
+    
+    # Pre-compute offsets for p dimension
+    p_offsets = tl.arange(0, BLOCK_SIZE_P)
+    
+    # Initialize sum array for current (r, q) pair
+    for p_block_start in range(0, NP, BLOCK_SIZE_P):
+        current_p_offsets = p_block_start + p_offsets
+        p_mask = current_p_offsets < NP
+        
+        # Initialize sum[p] = 0.0
+        sum_vals = tl.zeros([BLOCK_SIZE_P], dtype=tl.float32)
+        
+        # Inner loop: sum[p] += A[r][q][s] * C4[s][p] for all s
+        for s in range(NP):
+            # Load A[r][q][s] (scalar)
+            a_idx = pid_r * (NQ * NP) + pid_q * NP + s
+            a_val = tl.load(A_ptr + a_idx)
+            
+            # Load C4[s][p] (vector)
+            c4_idx_base = s * NP
+            c4_indices = c4_idx_base + current_p_offsets
+            c4_vals = tl.load(C4_ptr + c4_indices, mask=p_mask, other=0.0)
+            
+            # Accumulate: sum[p] += A[r][q][s] * C4[s][p]
+            sum_vals += a_val * c4_vals
+        
+        # Store sum values to temporary array
+        sum_indices = current_p_offsets
+        tl.store(sum_ptr + sum_indices, sum_vals, mask=p_mask)
+    
+    # Second loop: A[r][q][p] = sum[p]
+    for p_block_start in range(0, NP, BLOCK_SIZE_P):
+        current_p_offsets = p_block_start + p_offsets
+        p_mask = current_p_offsets < NP
+        
+        # Load sum values
+        sum_vals = tl.load(sum_ptr + current_p_offsets, mask=p_mask, other=0.0)
+        
+        # Store to A[r][q][p]
+        a_idx_base = pid_r * (NQ * NP) + pid_q * NP
+        a_indices = a_idx_base + current_p_offsets
+        tl.store(A_ptr + a_indices, sum_vals, mask=p_mask)
+
+def doitgen_triton(A, C4, sum, NP, NQ, NR):
+    # Define block size
+    BLOCK_SIZE_P = 32
+    
+    # Launch grid: one program per (r, q) pair
+    grid = (NR, NQ)
+    
+    # Launch kernel
+    doitgen_kernel[grid](
+        A, C4, sum, 
+        NP, NQ, NR,
+        BLOCK_SIZE_P
+    )
+```

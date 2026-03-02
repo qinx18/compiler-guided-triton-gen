@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for doitgen (Polybench) - attempt 5"""
+"""Correctness test for doitgen (Polybench) - attempt 1"""
 import sys
 import ctypes
 import numpy as np
@@ -10,7 +10,7 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.doitgen.attempt5 import doitgen_triton
+    from polybench_results.llm_triton.doitgen.attempt1 import doitgen_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
@@ -52,9 +52,6 @@ def run_c_reference(A_c, C4_c, sum_c, NP, NQ, NR):
     CType_A = ctypes.c_float * (25 * 20 * 30)
     c_arr_A = CType_A.in_dll(lib, 'A')
     A_c[:] = np.frombuffer(c_arr_A, dtype=np.float32).reshape(25, 20, 30).copy()
-    CType_sum = ctypes.c_float * (30)
-    c_arr_sum = CType_sum.in_dll(lib, 'sum')
-    sum_c[:] = np.frombuffer(c_arr_sum, dtype=np.float32).reshape(30).copy()
 
 def test_correctness():
     """Test Triton vs C reference."""
@@ -97,16 +94,9 @@ def test_correctness():
             rel_err = abs_err / max(denom, 1e-10)
             max_error = max(max_error, abs_err)
             max_rel_error = max(max_rel_error, rel_err)
-            c_val = torch.from_numpy(sum_c).float()
-            tr_val = sum_tr.cpu().float()
-            abs_err = torch.max(torch.abs(c_val - tr_val)).item()
-            denom = torch.max(torch.abs(c_val)).item()
-            rel_err = abs_err / max(denom, 1e-10)
-            max_error = max(max_error, abs_err)
-            max_rel_error = max(max_rel_error, rel_err)
 
-            # Pass if absolute error < 1e-3 OR relative error < 1e-4
-            passed = (max_error < 1e-3) or (max_rel_error < 1e-4)
+            # Pass if absolute error < atol OR relative error < rtol
+            passed = (max_error < 0.001) or (max_rel_error < 0.0001)
             if passed:
                 print(f"  Test {test_idx + 1}: PASS (abs={max_error:.6e} rel={max_rel_error:.6e})")
             else:

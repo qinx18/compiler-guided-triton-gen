@@ -10,7 +10,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton.cholesky.attempt1 import cholesky_triton
+    from polybench_results.llm_triton.cholesky.attempt3 import cholesky_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
@@ -36,7 +36,9 @@ def benchmark():
     num_warmup = 5
     num_iterations = 50
 
-    A = torch.randn(120, 120, device='cuda', dtype=torch.float32)
+    # SPD matrix: A = R^T R + N*I
+    _R = torch.randn(120, 120, device='cuda', dtype=torch.float32)
+    A = _R.T @ _R + 120 * torch.eye(120, device='cuda', dtype=torch.float32)
     N = 120
 
     # C reference benchmark

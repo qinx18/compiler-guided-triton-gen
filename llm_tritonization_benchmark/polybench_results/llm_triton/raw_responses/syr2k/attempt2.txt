@@ -1,0 +1,277 @@
+
+## PREVIOUS ATTEMPT FAILED
+
+**Error type**: unknown
+**Error message**:
+```
+  Test 1: ERROR - at 26:12:
+    i_indices = i_start + i_offsets
+    j_indices = j_start + j_offsets
+
+    # Create masks for valid indices
+    i_mask = i_indices < N
+    j_mask = j_indices < N
+
+    # For each i in this block
+    for i_local in range(BLOCK_SIZE_I):
+        i = i_start + i_local
+        if i >= N:
+            break
+            ^
+unsupported AST node type: Break
+  Test 2: ERROR - at 26:12:
+    i_indices = i_start + i_offsets
+    j_indices = j_start + j_offsets
+
+    # Create masks for valid indices
+    i_mask = i_indices < N
+    j_mask = j_indices < N
+
+    # For each i in this block
+    for i_local in range(BLOCK_SIZE_I):
+        i = i_start + i_local
+        if i >= N:
+            break
+            ^
+unsupported AST node type: Break
+  Test 3: ERROR - at 26:12:
+    i_indices = i_start + i_offsets
+    j_indices = j_start + j_offsets
+
+    # Create masks for valid indices
+    i_mask = i_indices < N
+    j_mask = j_indices < N
+
+    # For each i in this block
+    for i_local in range(BLOCK_SIZE_I):
+        i = i_start + i_local
+        if i >= N:
+            break
+            ^
+unsupported AST node type: Break
+Some tests FAILED!
+
+```
+
+Please fix the error.
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def syr2k_kernel(A_ptr, B_ptr, C_ptr, alpha, beta, M, N, stride_A_0, stride_A_1, stride_B_0, stride_B_1, stride_C_0, stride_C_1, BLOCK_SIZE_I: tl.constexpr, BLOCK_SIZE_J: tl.constexpr):
+    # Get program IDs
+    pid_i = tl.program_id(0)
+    pid_j = tl.program_id(1)
+    
+    # Calculate starting positions for this thread block
+    i_start = pid_i * BLOCK_SIZE_I
+    j_start = pid_j * BLOCK_SIZE_J
+    
+    # Create offset vectors once at the start
+    i_offsets = tl.arange(0, BLOCK_SIZE_I)
+    j_offsets = tl.arange(0, BLOCK_SIZE_J)
+    
+    # Calculate actual indices for this block
+    i_indices = i_start + i_offsets
+    j_indices = j_start + j_offsets
+    
+    # Create masks for valid indices
+    i_mask = i_indices < N
+    j_mask = j_indices < N
+    
+    # For each i in this block
+    for i_local in range(BLOCK_SIZE_I):
+        i = i_start + i_local
+        if i >= N:
+            break
+            
+        # First loop: multiply C[i][j] by beta for j <= i
+        valid_j_indices = j_indices
+        valid_j_mask = j_mask & (j_indices <= i)
+        
+        if tl.sum(valid_j_mask.to(tl.int32)) > 0:
+            # Load C[i][j] values
+            c_ptrs = C_ptr + i * stride_C_0 + valid_j_indices * stride_C_1
+            c_vals = tl.load(c_ptrs, mask=valid_j_mask, other=0.0)
+            
+            # Multiply by beta
+            c_vals = c_vals * beta
+            
+            # Store back to C
+            tl.store(c_ptrs, c_vals, mask=valid_j_mask)
+        
+        # Second nested loop: accumulate for k and j
+        for k in range(M):
+            # Load A[j][k] and B[j][k] for all valid j
+            a_ptrs = A_ptr + valid_j_indices * stride_A_0 + k * stride_A_1
+            b_ptrs = B_ptr + valid_j_indices * stride_B_0 + k * stride_B_1
+            
+            a_vals = tl.load(a_ptrs, mask=valid_j_mask, other=0.0)
+            b_vals = tl.load(b_ptrs, mask=valid_j_mask, other=0.0)
+            
+            # Load B[i][k]
+            b_i_k_ptr = B_ptr + i * stride_B_0 + k * stride_B_1
+            b_i_k = tl.load(b_i_k_ptr)
+            
+            # Load A[i][k]
+            a_i_k_ptr = A_ptr + i * stride_A_0 + k * stride_A_1
+            a_i_k = tl.load(a_i_k_ptr)
+            
+            # Calculate the update: A[j][k]*alpha*B[i][k] + B[j][k]*alpha*A[i][k]
+            update = a_vals * alpha * b_i_k + b_vals * alpha * a_i_k
+            
+            # Load current C[i][j] values
+            c_ptrs = C_ptr + i * stride_C_0 + valid_j_indices * stride_C_1
+            c_vals = tl.load(c_ptrs, mask=valid_j_mask, other=0.0)
+            
+            # Add the update
+            c_vals = c_vals + update
+            
+            # Store back to C
+            tl.store(c_ptrs, c_vals, mask=valid_j_mask)
+
+def syr2k_triton(A, B, C, alpha, beta, M, N):
+    # Define block sizes
+    BLOCK_SIZE_I = 16
+    BLOCK_SIZE_J = 16
+    
+    # Calculate grid dimensions
+    grid_i = triton.cdiv(N, BLOCK_SIZE_I)
+    grid_j = triton.cdiv(N, BLOCK_SIZE_J)
+    
+    # Launch the kernel
+    syr2k_kernel[(grid_i, grid_j)](
+        A, B, C, alpha, beta, M, N,
+        A.stride(0), A.stride(1),
+        B.stride(0), B.stride(1),
+        C.stride(0), C.stride(1),
+        BLOCK_SIZE_I, BLOCK_SIZE_J
+    )
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define M 60
+#define N 80
+
+float C[N][N];
+float A[N][M];
+float B[N][M];
+
+float alpha = 1.5f;
+float beta = 1.2f;
+
+void syr2k_kernel() {
+  int i, j, k;
+#pragma scop
+  for (i = 0; i < N; i++) {
+    for (j = 0; j <= i; j++)
+      C[i][j] *= beta;
+    for (k = 0; k < M; k++)
+      for (j = 0; j <= i; j++)
+	{
+	  C[i][j] += A[j][k]*alpha*B[i][k] + B[j][k]*alpha*A[i][k];
+	}
+  }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (i = 0; i < N; i++) {
+    for (j = 0; j <= i; j++)
+      C[i][j] *= beta;
+    for (k = 0; k < M; k++)
+      for (j = 0; j <= i; j++)
+	{
+	  C[i][j] += A[j][k]*alpha*B[i][k] + B[j][k]*alpha*A[i][k];
+	}
+  }
+```
+
+## Parallelization Analysis
+
+**Loop dimensions**: ['i', 'j']
+
+- Parallelize `j`, sequential `i`: VALID
+
+- Parallelize `i`, sequential `j`: VALID
+
+**Both `i` and `j` are freely parallelizable.** Use a 2D grid to parallelize both simultaneously for best GPU occupancy.
+
+
+## Array Information:
+- `A`: read-only
+- `B`: read-only
+- `C`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `M` = 60
+- `N` = 80
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `syr2k_kernel`
+2. Includes a Python wrapper function named `syr2k_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def syr2k_triton(A, B, C, alpha, beta, M, N):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 2 of 10. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

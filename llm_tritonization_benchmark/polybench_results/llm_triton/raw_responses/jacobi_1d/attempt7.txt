@@ -1,0 +1,200 @@
+
+## PREVIOUS ATTEMPT HAS LOW PERFORMANCE - NEEDS BETTER PARALLELIZATION
+
+Your last attempt is CORRECT but has very low performance (speedup: 0.077703x).
+This indicates the code is NOT properly parallelized for GPU execution.
+
+**CRITICAL ISSUE**: Your kernel is likely running sequentially instead of in parallel.
+
+**Common parallelization mistakes to fix**:
+1. Using `grid=(1,)` with a single thread doing all work — this is SEQUENTIAL on GPU!
+2. Using scalar `tl.load`/`tl.store` in a Python for loop instead of vectorized block operations
+3. NOT using `tl.program_id(0)` to distribute work across GPU blocks
+4. Processing ALL elements in one block instead of splitting across multiple blocks
+
+**CORRECT parallel pattern** (each block handles different elements):
+```python
+@triton.jit
+def kernel(..., BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)                    # Get unique block ID
+    block_start = pid * BLOCK_SIZE            # Each block starts at different offset
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # Each block handles BLOCK_SIZE elements
+    mask = offsets < n_elements
+    # Load, compute, store for THIS block only - NO for loop over all elements!
+```
+
+**For 2D kernels**, parallelize the outer loop dimension:
+```python
+@triton.jit
+def kernel(..., N, BLOCK_SIZE: tl.constexpr):
+    row = tl.program_id(0)  # Each block handles one row
+    col_offsets = tl.arange(0, BLOCK_SIZE)
+    # Process row 'row' with vectorized column access
+```
+
+## LAST ATTEMPT (NEEDS PARALLELIZATION FIX):
+```python
+import triton
+import triton.language as tl
+
+@triton.jit
+def jacobi_1d_kernel(A_ptr, B_ptr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    block_start = pid * BLOCK_SIZE + 1
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    
+    mask = (offsets >= 1) & (offsets < N - 1)
+    
+    # Load A values with offsets
+    a_left = tl.load(A_ptr + offsets - 1, mask=mask, other=0.0)
+    a_center = tl.load(A_ptr + offsets, mask=mask, other=0.0)
+    a_right = tl.load(A_ptr + offsets + 1, mask=mask, other=0.0)
+    
+    # Compute B values
+    b_vals = 0.33333 * (a_left + a_center + a_right)
+    
+    # Store B values
+    tl.store(B_ptr + offsets, b_vals, mask=mask)
+
+@triton.jit
+def jacobi_1d_kernel_ba(A_ptr, B_ptr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    block_start = pid * BLOCK_SIZE + 1
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    
+    mask = (offsets >= 1) & (offsets < N - 1)
+    
+    # Load B values with offsets
+    b_left = tl.load(B_ptr + offsets - 1, mask=mask, other=0.0)
+    b_center = tl.load(B_ptr + offsets, mask=mask, other=0.0)
+    b_right = tl.load(B_ptr + offsets + 1, mask=mask, other=0.0)
+    
+    # Compute A values
+    a_vals = 0.33333 * (b_left + b_center + b_right)
+    
+    # Store A values
+    tl.store(A_ptr + offsets, a_vals, mask=mask)
+
+def jacobi_1d_triton(A, B, N, TSTEPS):
+    BLOCK_SIZE = 64
+    num_elements = N - 2
+    grid = (triton.cdiv(num_elements, BLOCK_SIZE),)
+    
+    for t in range(TSTEPS):
+        jacobi_1d_kernel[grid](A, B, N, BLOCK_SIZE=BLOCK_SIZE)
+        jacobi_1d_kernel_ba[grid](A, B, N, BLOCK_SIZE=BLOCK_SIZE)
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define TSTEPS 40
+#define N 120
+
+float A[N];
+float B[N];
+
+void jacobi_1d_kernel() {
+  int t, i;
+#pragma scop
+  for (t = 0; t < TSTEPS; t++)
+    {
+      for (i = 1; i < N - 1; i++)
+	B[i] = 0.33333 * (A[i-1] + A[i] + A[i + 1]);
+      for (i = 1; i < N - 1; i++)
+	A[i] = 0.33333 * (B[i-1] + B[i] + B[i + 1]);
+    }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (t = 0; t < TSTEPS; t++)
+    {
+      for (i = 1; i < N - 1; i++)
+	B[i] = 0.33333 * (A[i-1] + A[i] + A[i + 1]);
+      for (i = 1; i < N - 1; i++)
+	A[i] = 0.33333 * (B[i-1] + B[i] + B[i + 1]);
+    }
+```
+
+## Parallelization Analysis
+
+**Loop dimensions**: ['t', 'i']
+
+- Parallelize `i`, sequential `t`: VALID
+
+- Parallelize `t`, sequential `i`: VALID
+
+**Both `t` and `i` are freely parallelizable.** Use a 2D grid to parallelize both simultaneously for best GPU occupancy.
+
+
+## Array Information:
+- `A`: read-write
+- `B`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `N` = 120
+- `TSTEPS` = 40
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `jacobi_1d_kernel`
+2. Includes a Python wrapper function named `jacobi_1d_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def jacobi_1d_triton(A, B, N, TSTEPS):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 7 of 10. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

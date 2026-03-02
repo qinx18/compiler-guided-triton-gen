@@ -1,0 +1,281 @@
+
+## PREVIOUS ATTEMPT FAILED
+
+**Error type**: unknown
+**Error message**:
+```
+  Test 1: ERROR - at 54:16:
+
+    # Inner k loop: for (k=i+1; k<j; k++)
+    k_offsets = tl.arange(0, BLOCK_SIZE)
+    for k_block in range(i_val + 1, N, BLOCK_SIZE):
+        k_vals = k_block + k_offsets
+        k_valid_mask = (k_vals >= i_val + 1) & (k_vals < N)
+
+        # For each k, check against all j values
+        for k_idx in range(BLOCK_SIZE):
+            k_val = k_block + k_idx
+            if k_val >= N or k_val <= i_val:
+                break
+                ^
+unsupported AST node type: Break
+  Test 2: ERROR - at 54:16:
+
+    # Inner k loop: for (k=i+1; k<j; k++)
+    k_offsets = tl.arange(0, BLOCK_SIZE)
+    for k_block in range(i_val + 1, N, BLOCK_SIZE):
+        k_vals = k_block + k_offsets
+        k_valid_mask = (k_vals >= i_val + 1) & (k_vals < N)
+
+        # For each k, check against all j values
+        for k_idx in range(BLOCK_SIZE):
+            k_val = k_block + k_idx
+            if k_val >= N or k_val <= i_val:
+                break
+                ^
+unsupported AST node type: Break
+  Test 3: ERROR - at 54:16:
+
+    # Inner k loop: for (k=i+1; k<j; k++)
+    k_offsets = tl.arange(0, BLOCK_SIZE)
+    for k_block in range(i_val + 1, N, BLOCK_SIZE):
+        k_vals = k_block + k_offsets
+        k_valid_mask = (k_vals >= i_val + 1) & (k_vals < N)
+
+        # For each k, check against all j values
+        for k_idx in range(BLOCK_SIZE):
+            k_val = k_block + k_idx
+            if k_val >= N or k_val <= i_val:
+                break
+                ^
+unsupported AST node type: Break
+Some tests FAILED!
+
+```
+
+Please fix the error.
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def nussinov_kernel(seq_ptr, table_ptr, N, i_val, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    
+    # Each block processes different j values for the current i
+    j_start = (i_val + 1) + pid * BLOCK_SIZE
+    j_offsets = j_start + tl.arange(0, BLOCK_SIZE)
+    j_mask = (j_offsets < N) & (j_offsets > i_val)
+    
+    # Current table[i][j] positions
+    current_indices = i_val * N + j_offsets
+    current_vals = tl.load(table_ptr + current_indices, mask=j_mask, other=0)
+    
+    # if (j-1>=0) table[i][j] = max_score(table[i][j], table[i][j-1]);
+    left_mask = j_mask & (j_offsets > 0)
+    left_indices = i_val * N + (j_offsets - 1)
+    left_vals = tl.load(table_ptr + left_indices, mask=left_mask, other=0)
+    current_vals = tl.where(left_mask, tl.maximum(current_vals, left_vals), current_vals)
+    
+    # if (i+1<N) table[i][j] = max_score(table[i][j], table[i+1][j]);
+    down_mask = j_mask & (i_val + 1 < N)
+    down_indices = (i_val + 1) * N + j_offsets
+    down_vals = tl.load(table_ptr + down_indices, mask=down_mask, other=0)
+    current_vals = tl.where(down_mask, tl.maximum(current_vals, down_vals), current_vals)
+    
+    # if (j-1>=0 && i+1<N)
+    diag_mask = j_mask & (j_offsets > 0) & (i_val + 1 < N)
+    
+    if tl.sum(diag_mask.to(tl.int32)) > 0:
+        diag_indices = (i_val + 1) * N + (j_offsets - 1)
+        diag_vals = tl.load(table_ptr + diag_indices, mask=diag_mask, other=0)
+        
+        # Check if i < j-1 for match computation
+        no_adjacent_mask = diag_mask & (i_val < j_offsets - 1)
+        
+        # Load sequence values
+        seq_i = tl.load(seq_ptr + i_val)
+        seq_j = tl.load(seq_ptr + j_offsets, mask=j_mask, other=0)
+        match_vals = tl.where((seq_i + seq_j) == 3, 1, 0)
+        
+        # Apply match only when not adjacent
+        updated_diag = tl.where(no_adjacent_mask, diag_vals + match_vals, diag_vals)
+        current_vals = tl.where(diag_mask, tl.maximum(current_vals, updated_diag), current_vals)
+    
+    # Inner k loop: for (k=i+1; k<j; k++)
+    k_offsets = tl.arange(0, BLOCK_SIZE)
+    for k_block in range(i_val + 1, N, BLOCK_SIZE):
+        k_vals = k_block + k_offsets
+        k_valid_mask = (k_vals >= i_val + 1) & (k_vals < N)
+        
+        # For each k, check against all j values
+        for k_idx in range(BLOCK_SIZE):
+            k_val = k_block + k_idx
+            if k_val >= N or k_val <= i_val:
+                break
+                
+            k_j_mask = j_mask & (k_val < j_offsets)
+            
+            if tl.sum(k_j_mask.to(tl.int32)) > 0:
+                left_k_idx = i_val * N + k_val
+                right_k_indices = (k_val + 1) * N + j_offsets
+                
+                left_k_val = tl.load(table_ptr + left_k_idx)
+                right_k_vals = tl.load(table_ptr + right_k_indices, mask=k_j_mask, other=0)
+                
+                sum_vals = left_k_val + right_k_vals
+                current_vals = tl.where(k_j_mask, tl.maximum(current_vals, sum_vals), current_vals)
+    
+    # Store results
+    tl.store(table_ptr + current_indices, current_vals, mask=j_mask)
+
+def nussinov_triton(seq, table, N):
+    BLOCK_SIZE = 32
+    
+    # Process i from N-1 down to 0 (sequential due to dependencies)
+    for i in range(N-1, -1, -1):
+        num_j = N - (i + 1)  # Number of j values to process
+        if num_j > 0:
+            grid = (triton.cdiv(num_j, BLOCK_SIZE),)
+            nussinov_kernel[grid](
+                seq, table, N, i, BLOCK_SIZE
+            )
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define N 180
+
+typedef char base;
+#define match(b1, b2) (((b1)+(b2)) == 3 ? 1 : 0)
+#define max_score(s1, s2) ((s1 >= s2) ? s1 : s2)
+
+int seq[N];
+int table[N][N];
+
+
+void nussinov_kernel() {
+  int i, j, k;
+#pragma scop
+ for (i = N-1; i >= 0; i--) {
+  for (j=i+1; j<N; j++) {
+
+   if (j-1>=0)
+      table[i][j] = max_score(table[i][j], table[i][j-1]);
+   if (i+1<N)
+      table[i][j] = max_score(table[i][j], table[i+1][j]);
+
+   if (j-1>=0 && i+1<N) {
+     /* don't allow adjacent elements to bond */
+     if (i<j-1)
+        table[i][j] = max_score(table[i][j], table[i+1][j-1]+match(seq[i], seq[j]));
+     else
+        table[i][j] = max_score(table[i][j], table[i+1][j-1]);
+   }
+
+   for (k=i+1; k<j; k++) {
+      table[i][j] = max_score(table[i][j], table[i][k] + table[k+1][j]);
+   }
+  }
+ }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (i = N-1; i >= 0; i--) {
+  for (j=i+1; j<N; j++) {
+
+   if (j-1>=0)
+      table[i][j] = max_score(table[i][j], table[i][j-1]);
+   if (i+1<N)
+      table[i][j] = max_score(table[i][j], table[i+1][j]);
+
+   if (j-1>=0 && i+1<N) {
+     /* don't allow adjacent elements to bond */
+     if (i<j-1)
+        table[i][j] = max_score(table[i][j], table[i+1][j-1]+match(seq[i], seq[j]));
+     else
+        table[i][j] = max_score(table[i][j], table[i+1][j-1]);
+   }
+
+   for (k=i+1; k<j; k++) {
+      table[i][j] = max_score(table[i][j], table[i][k] + table[k+1][j]);
+   }
+  }
+ }
+```
+
+
+## Array Information:
+- `seq`: read-only
+- `table`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `N` = 180
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `nussinov_kernel`
+2. Includes a Python wrapper function named `nussinov_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def nussinov_triton(seq, table, N):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 4 of 10. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

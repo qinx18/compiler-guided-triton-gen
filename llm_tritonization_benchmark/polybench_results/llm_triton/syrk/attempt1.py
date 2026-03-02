@@ -3,50 +3,55 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def syrk_kernel(A_ptr, C_ptr, alpha, beta, M, N, 
-                A_stride0, A_stride1, C_stride0, C_stride1,
-                BLOCK_SIZE: tl.constexpr):
+def syrk_kernel(A_ptr, C_ptr, alpha, beta, M, N, A_stride_0, A_stride_1, C_stride_0, C_stride_1, BLOCK_SIZE_I: tl.constexpr, BLOCK_SIZE_J: tl.constexpr):
+    pid_i = tl.program_id(0)
+    pid_j = tl.program_id(1)
     
-    # Get program ID for the row
-    i = tl.program_id(0)
+    i_start = pid_i * BLOCK_SIZE_I
+    j_start = pid_j * BLOCK_SIZE_J
     
-    if i >= N:
-        return
+    i_offsets = tl.arange(0, BLOCK_SIZE_I)
+    j_offsets = tl.arange(0, BLOCK_SIZE_J)
     
-    # First loop: multiply C[i][j] by beta for j <= i
-    j_offsets = tl.arange(0, BLOCK_SIZE)
-    for j_start in range(0, i + 1, BLOCK_SIZE):
-        current_j = j_start + j_offsets
-        mask_j = (current_j < N) & (current_j <= i)
-        
-        c_ptrs = C_ptr + i * C_stride0 + current_j * C_stride1
-        c_vals = tl.load(c_ptrs, mask=mask_j, other=0.0)
-        c_vals = c_vals * beta
-        tl.store(c_ptrs, c_vals, mask=mask_j)
+    i_indices = i_start + i_offsets
+    j_indices = j_start + j_offsets
     
-    # Second loop: accumulate alpha * A[i][k] * A[j][k]
+    # First loop: C[i][j] *= beta
+    for i_idx in range(BLOCK_SIZE_I):
+        i = i_start + i_idx
+        if i < N:
+            j_mask = (j_indices < N) & (j_indices <= i)
+            if tl.sum(j_mask.to(tl.int32)) > 0:
+                c_ptrs = C_ptr + i * C_stride_0 + j_indices * C_stride_1
+                c_vals = tl.load(c_ptrs, mask=j_mask)
+                c_vals = c_vals * beta
+                tl.store(c_ptrs, c_vals, mask=j_mask)
+    
+    # Second loop: accumulation
     for k in range(M):
-        a_ik = tl.load(A_ptr + i * A_stride0 + k * A_stride1)
-        
-        for j_start in range(0, i + 1, BLOCK_SIZE):
-            current_j = j_start + j_offsets
-            mask_j = (current_j < N) & (current_j <= i)
-            
-            a_ptrs_j = A_ptr + current_j * A_stride0 + k * A_stride1
-            a_jk = tl.load(a_ptrs_j, mask=mask_j, other=0.0)
-            
-            c_ptrs = C_ptr + i * C_stride0 + current_j * C_stride1
-            c_vals = tl.load(c_ptrs, mask=mask_j, other=0.0)
-            c_vals = c_vals + alpha * a_ik * a_jk
-            tl.store(c_ptrs, c_vals, mask=mask_j)
+        for i_idx in range(BLOCK_SIZE_I):
+            i = i_start + i_idx
+            if i < N:
+                j_mask = (j_indices < N) & (j_indices <= i)
+                if tl.sum(j_mask.to(tl.int32)) > 0:
+                    a_i_k = tl.load(A_ptr + i * A_stride_0 + k * A_stride_1)
+                    a_j_k_ptrs = A_ptr + j_indices * A_stride_0 + k * A_stride_1
+                    a_j_k_vals = tl.load(a_j_k_ptrs, mask=j_mask)
+                    
+                    c_ptrs = C_ptr + i * C_stride_0 + j_indices * C_stride_1
+                    c_vals = tl.load(c_ptrs, mask=j_mask)
+                    c_vals = c_vals + alpha * a_i_k * a_j_k_vals
+                    tl.store(c_ptrs, c_vals, mask=j_mask)
 
 def syrk_triton(A, C, alpha, beta, M, N):
-    BLOCK_SIZE = 64
-    grid = (triton.cdiv(N, 1),)
+    BLOCK_SIZE_I = 16
+    BLOCK_SIZE_J = 64
+    
+    grid = (triton.cdiv(N, BLOCK_SIZE_I), triton.cdiv(N, BLOCK_SIZE_J))
     
     syrk_kernel[grid](
         A, C, alpha, beta, M, N,
         A.stride(0), A.stride(1),
         C.stride(0), C.stride(1),
-        BLOCK_SIZE=BLOCK_SIZE
+        BLOCK_SIZE_I, BLOCK_SIZE_J
     )

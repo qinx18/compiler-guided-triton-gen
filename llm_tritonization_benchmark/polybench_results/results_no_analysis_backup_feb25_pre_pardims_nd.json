@@ -1,0 +1,167 @@
+{
+  "adi": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 2.799562,
+      "triton_time_ms": 1.267912,
+      "speedup": 2.208009
+    },
+    "final_attempt": 2
+  },
+  "cholesky": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 7,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=2.320705e+00 rel_error=5.084350e-02",
+      "max_error": "2.320705e+00"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.32953,
+      "triton_time_ms": 1.993999,
+      "speedup": 0.165261
+    },
+    "final_attempt": 7
+  },
+  "deriche": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 3,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=9.865161e-01 rel_error=1.282945e+02",
+      "max_error": "9.865161e-01"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.620992,
+      "triton_time_ms": 5.652479,
+      "speedup": 0.109862
+    },
+    "final_attempt": 3
+  },
+  "durbin": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.100996,
+      "triton_time_ms": 0.470144,
+      "speedup": 0.21482
+    },
+    "final_attempt": 1
+  },
+  "floyd_warshall": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 4,
+    "final_error": {
+      "type": "unknown",
+      "message": "path_ik = tl.load(path_ik_ptrs, mask=i_mask, other=float('inf'))\n\n    # Load path[k][j] values for all j in this block\n    path_kj_ptrs = path_ptr + k * N + j_indices\n    path_kj = tl.load(path_kj_ptrs, mask=j_mask, other=float('inf'))\n\n    # Process all combinations of i and j in this block\n    for i_offset in range(BLOCK_SIZE):\n        i_idx = block_start_i + i_offset\n        if i_idx < N:\n            # Get path[i][k] for this specific i\n            current_path_ik = path_ik[i_offset]\n                              ^\nValueError('Did you forget to add @triton.jit ? (`_builder` argument must be provided outside of JIT functions.)')\n  Test 2: ERROR - at 35:30:\n    path_ik = tl.load(path_ik_ptrs, mask=i_mask, other=float('inf'))\n\n    # Load path[k][j] values for all j in this block\n    path_kj_ptrs = path_ptr + k * N + j_indices\n    path_kj = tl.load(path_kj_ptrs, mask=j_mask, other=float('inf'))\n\n    # Process all combinations of i and j in this block\n    for i_offset in range(BLOCK_SIZE):\n        i_idx = block_start_i + i_offset\n        if i_idx < N:\n            # Get path[i][k] for this specific i\n            current_path_ik = path_ik[i_offset]\n                              ^\nValueError('Did you forget to add @triton.jit ? (`_builder` argument must be provided outside of JIT functions.)')\n  Test 3: ERROR - at 35:30:\n    path_ik = tl.load(path_ik_ptrs, mask=i_mask, other=float('inf'))\n\n    # Load path[k][j] values for all j in this block\n    path_kj_ptrs = path_ptr + k * N + j_indices\n    path_kj = tl.load(path_kj_ptrs, mask=j_mask, other=float('inf'))\n\n    # Process all combinations of i and j in this block\n    for i_offset in range(BLOCK_SIZE):\n        i_idx = block_start_i + i_offset\n        if i_idx < N:\n            # Get path[i][k] for this specific i\n            current_path_ik = path_ik[i_offset]\n                              ^\nValueError('Did you forget to add @triton.jit ? (`_builder` argument must be provided outside of JIT functions.)')\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 1.031153,
+      "triton_time_ms": 1.405776,
+      "speedup": 0.733512
+    },
+    "final_attempt": 4
+  },
+  "gramschmidt": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.44164,
+      "triton_time_ms": 1.564744,
+      "speedup": 0.282244
+    },
+    "final_attempt": 1
+  },
+  "lu": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.524563,
+      "triton_time_ms": 2.653402,
+      "speedup": 0.197695
+    },
+    "final_attempt": 2
+  },
+  "ludcmp": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.568904,
+      "triton_time_ms": 1.356424,
+      "speedup": 0.419414
+    },
+    "final_attempt": 2
+  },
+  "nussinov": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 10,
+    "final_attempt": 1,
+    "benchmark": {
+      "c_ref_time_ms": 0.823599,
+      "triton_time_ms": 16.298796,
+      "speedup": 0.050531
+    },
+    "final_error": null
+  },
+  "seidel_2d": {
+    "triton_generated": true,
+    "test_passed": false,
+    "attempts": 10,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=1.277258e-01 rel_error=4.361963e-02",
+      "max_error": "1.277258e-01"
+    }
+  },
+  "symm": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.24072,
+      "triton_time_ms": 0.207496,
+      "speedup": 1.16012
+    },
+    "final_attempt": 1
+  },
+  "trisolv": {
+    "triton_generated": true,
+    "test_passed": false,
+    "attempts": 10,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 13:20:\n    if i >= N:\n        return\n\n    # x[i] = b[i]\n    b_ptr = b + i\n    x_val = tl.load(b_ptr)\n\n    # for (j = 0; j < i; j++)\n    #     x[i] -= L[i][j] * x[j];\n    if i > 0:\n        BLOCK_SIZE = 32\n        j_offsets = tl.arange(0, BLOCK_SIZE)\n                    ^\n  Test 2: ERROR - at 13:20:\n    if i >= N:\n        return\n\n    # x[i] = b[i]\n    b_ptr = b + i\n    x_val = tl.load(b_ptr)\n\n    # for (j = 0; j < i; j++)\n    #     x[i] -= L[i][j] * x[j];\n    if i > 0:\n        BLOCK_SIZE = 32\n        j_offsets = tl.arange(0, BLOCK_SIZE)\n                    ^\n  Test 3: ERROR - at 13:20:\n    if i >= N:\n        return\n\n    # x[i] = b[i]\n    b_ptr = b + i\n    x_val = tl.load(b_ptr)\n\n    # for (j = 0; j < i; j++)\n    #     x[i] -= L[i][j] * x[j];\n    if i > 0:\n        BLOCK_SIZE = 32\n        j_offsets = tl.arange(0, BLOCK_SIZE)\n                    ^\nSome tests FAILED!\n"
+    }
+  },
+  "trmm": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 3,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 27:12:\n\n    # Load initial B[i, j] values\n    b_ptrs = B + i_indices[:, None] * N + j_indices[None, :]\n    mask_ij = mask_i[:, None] & mask_j[None, :]\n    b_vals = tl.load(b_ptrs, mask=mask_ij, other=0.0)\n\n    # For each valid i in the block\n    for i_offset in range(BLOCK_SIZE_I):\n        i_actual = block_i + i_offset\n        cond1 = i_actual < M\n        if not cond1:\n            continue\n            ^\nunsupported AST node type: Continue\n  Test 2: ERROR - at 27:12:\n\n    # Load initial B[i, j] values\n    b_ptrs = B + i_indices[:, None] * N + j_indices[None, :]\n    mask_ij = mask_i[:, None] & mask_j[None, :]\n    b_vals = tl.load(b_ptrs, mask=mask_ij, other=0.0)\n\n    # For each valid i in the block\n    for i_offset in range(BLOCK_SIZE_I):\n        i_actual = block_i + i_offset\n        cond1 = i_actual < M\n        if not cond1:\n            continue\n            ^\nunsupported AST node type: Continue\n  Test 3: ERROR - at 27:12:\n\n    # Load initial B[i, j] values\n    b_ptrs = B + i_indices[:, None] * N + j_indices[None, :]\n    mask_ij = mask_i[:, None] & mask_j[None, :]\n    b_vals = tl.load(b_ptrs, mask=mask_ij, other=0.0)\n\n    # For each valid i in the block\n    for i_offset in range(BLOCK_SIZE_I):\n        i_actual = block_i + i_offset\n        cond1 = i_actual < M\n        if not cond1:\n            continue\n            ^\nunsupported AST node type: Continue\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.208307,
+      "triton_time_ms": 0.145886,
+      "speedup": 1.427875
+    },
+    "final_attempt": 3
+  }
+}

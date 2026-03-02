@@ -3,123 +3,118 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def k2mm_kernel_first(A, B, tmp, alpha, NI, NJ, NK,
-                      BLOCK_SIZE_I: tl.constexpr, BLOCK_SIZE_J: tl.constexpr):
+def k2mm_kernel(A_ptr, B_ptr, C_ptr, D_ptr, tmp_ptr, alpha, beta, NI, NJ, NK, NL,
+                A_stride_0, A_stride_1, B_stride_0, B_stride_1,
+                C_stride_0, C_stride_1, D_stride_0, D_stride_1,
+                tmp_stride_0, tmp_stride_1,
+                BLOCK_SIZE_I: tl.constexpr, BLOCK_SIZE_J: tl.constexpr,
+                BLOCK_SIZE_K: tl.constexpr, PHASE: tl.constexpr):
+    
     pid_i = tl.program_id(0)
     pid_j = tl.program_id(1)
+    
+    offsets_i = tl.arange(0, BLOCK_SIZE_I)
+    offsets_j = tl.arange(0, BLOCK_SIZE_J)
+    offsets_k = tl.arange(0, BLOCK_SIZE_K)
     
     i_start = pid_i * BLOCK_SIZE_I
     j_start = pid_j * BLOCK_SIZE_J
     
-    i_offsets = tl.arange(0, BLOCK_SIZE_I)
-    j_offsets = tl.arange(0, BLOCK_SIZE_J)
-    k_offsets = tl.arange(0, 32)
+    current_i_offsets = i_start + offsets_i
+    current_j_offsets = j_start + offsets_j
     
-    i_indices = i_start + i_offsets
-    j_indices = j_start + j_offsets
+    i_mask = current_i_offsets < NI
     
-    i_mask = i_indices < NI
-    j_mask = j_indices < NJ
-    
-    acc = tl.zeros((BLOCK_SIZE_I, BLOCK_SIZE_J), dtype=tl.float32)
-    
-    for k_start in range(0, NK, 32):
-        k_indices = k_start + k_offsets
-        k_mask = k_indices < NK
+    if PHASE == 0:
+        # First phase: compute tmp = alpha * A * B
+        j_mask = current_j_offsets < NJ
         
-        a_ptrs = A + i_indices[:, None] * NK + k_indices[None, :]
-        a_mask = i_mask[:, None] & k_mask[None, :]
-        a_vals = tl.load(a_ptrs, mask=a_mask, other=0.0)
+        # Initialize accumulator
+        tmp_block = tl.zeros((BLOCK_SIZE_I, BLOCK_SIZE_J), dtype=tl.float32)
         
-        b_ptrs = B + k_indices[:, None] * NJ + j_indices[None, :]
-        b_mask = k_mask[:, None] & j_mask[None, :]
-        b_vals = tl.load(b_ptrs, mask=b_mask, other=0.0)
+        for k_start in range(0, NK, BLOCK_SIZE_K):
+            current_k_offsets = k_start + offsets_k
+            k_mask = current_k_offsets < NK
+            
+            # Load A block
+            A_ptrs = A_ptr + current_i_offsets[:, None] * A_stride_0 + current_k_offsets[None, :] * A_stride_1
+            A_mask = i_mask[:, None] & k_mask[None, :]
+            A_block = tl.load(A_ptrs, mask=A_mask, other=0.0)
+            
+            # Load B block
+            B_ptrs = B_ptr + current_k_offsets[:, None] * B_stride_0 + current_j_offsets[None, :] * B_stride_1
+            B_mask = k_mask[:, None] & j_mask[None, :]
+            B_block = tl.load(B_ptrs, mask=B_mask, other=0.0)
+            
+            tmp_block += tl.dot(A_block, B_block)
         
-        acc += tl.dot(a_vals, b_vals)
-    
-    tmp_vals = acc * alpha
-    tmp_ptrs = tmp + i_indices[:, None] * NJ + j_indices[None, :]
-    store_mask = i_mask[:, None] & j_mask[None, :]
-    tl.store(tmp_ptrs, tmp_vals, mask=store_mask)
-
-@triton.jit
-def k2mm_kernel_second(tmp, C, D, beta, NI, NJ, NL,
-                       BLOCK_SIZE_I: tl.constexpr, BLOCK_SIZE_L: tl.constexpr):
-    pid_i = tl.program_id(0)
-    pid_l = tl.program_id(1)
-    
-    i_start = pid_i * BLOCK_SIZE_I
-    l_start = pid_l * BLOCK_SIZE_L
-    
-    i_offsets = tl.arange(0, BLOCK_SIZE_I)
-    l_offsets = tl.arange(0, BLOCK_SIZE_L)
-    j_offsets = tl.arange(0, 32)
-    
-    i_indices = i_start + i_offsets
-    l_indices = l_start + l_offsets
-    
-    i_mask = i_indices < NI
-    l_mask = l_indices < NL
-    
-    d_ptrs = D + i_indices[:, None] * NL + l_indices[None, :]
-    d_mask = i_mask[:, None] & l_mask[None, :]
-    d_vals = tl.load(d_ptrs, mask=d_mask, other=0.0)
-    acc = d_vals * beta
-    
-    for j_start in range(0, NJ, 32):
-        j_indices = j_start + j_offsets
-        j_mask = j_indices < NJ
-        
-        tmp_ptrs = tmp + i_indices[:, None] * NJ + j_indices[None, :]
+        # Scale by alpha and store
+        tmp_block = alpha * tmp_block
+        tmp_ptrs = tmp_ptr + current_i_offsets[:, None] * tmp_stride_0 + current_j_offsets[None, :] * tmp_stride_1
         tmp_mask = i_mask[:, None] & j_mask[None, :]
-        tmp_vals = tl.load(tmp_ptrs, mask=tmp_mask, other=0.0)
+        tl.store(tmp_ptrs, tmp_block, mask=tmp_mask)
         
-        c_ptrs = C + j_indices[:, None] * NL + l_indices[None, :]
-        c_mask = j_mask[:, None] & l_mask[None, :]
-        c_vals = tl.load(c_ptrs, mask=c_mask, other=0.0)
+    else:
+        # Second phase: compute D = beta * D + tmp * C
+        j_mask = current_j_offsets < NL
         
-        acc += tl.dot(tmp_vals, c_vals)
-    
-    tl.store(d_ptrs, acc, mask=d_mask)
-
-@triton.jit
-def k2mm_kernel(A, B, C, D, tmp, alpha, beta, NI, NJ, NK, NL):
-    pid = tl.program_id(0)
-    
-    if pid < NI * NJ:
-        i = pid // NJ
-        j = pid % NJ
+        # Load D and scale by beta
+        D_ptrs = D_ptr + current_i_offsets[:, None] * D_stride_0 + current_j_offsets[None, :] * D_stride_1
+        D_mask = i_mask[:, None] & j_mask[None, :]
+        result_block = tl.load(D_ptrs, mask=D_mask, other=0.0) * beta
         
-        tmp_val = 0.0
-        for k in range(NK):
-            a_ptr = A + i * NK + k
-            b_ptr = B + k * NJ + j
-            a_val = tl.load(a_ptr)
-            b_val = tl.load(b_ptr)
-            tmp_val += alpha * a_val * b_val
+        for k_start in range(0, NJ, BLOCK_SIZE_K):
+            current_k_offsets = k_start + offsets_k
+            k_mask = current_k_offsets < NJ
+            
+            # Load tmp block
+            tmp_ptrs = tmp_ptr + current_i_offsets[:, None] * tmp_stride_0 + current_k_offsets[None, :] * tmp_stride_1
+            tmp_mask = i_mask[:, None] & k_mask[None, :]
+            tmp_block = tl.load(tmp_ptrs, mask=tmp_mask, other=0.0)
+            
+            # Load C block
+            C_ptrs = C_ptr + current_k_offsets[:, None] * C_stride_0 + current_j_offsets[None, :] * C_stride_1
+            C_mask = k_mask[:, None] & j_mask[None, :]
+            C_block = tl.load(C_ptrs, mask=C_mask, other=0.0)
+            
+            result_block += tl.dot(tmp_block, C_block)
         
-        tmp_ptr = tmp + i * NJ + j
-        tl.store(tmp_ptr, tmp_val)
-    
-    elif pid < NI * NJ + NI * NL:
-        idx = pid - NI * NJ
-        i = idx // NL
-        l = idx % NL
-        
-        d_ptr = D + i * NL + l
-        d_val = tl.load(d_ptr) * beta
-        
-        for j in range(NJ):
-            tmp_ptr = tmp + i * NJ + j
-            c_ptr = C + j * NL + l
-            tmp_val = tl.load(tmp_ptr)
-            c_val = tl.load(c_ptr)
-            d_val += tmp_val * c_val
-        
-        tl.store(d_ptr, d_val)
+        tl.store(D_ptrs, result_block, mask=D_mask)
 
 def k2mm_triton(A, B, C, D, tmp, alpha, beta, NI, NJ, NK, NL):
-    total_work = NI * NJ + NI * NL
-    grid = (total_work,)
+    BLOCK_SIZE_I = 32
+    BLOCK_SIZE_J = 32
+    BLOCK_SIZE_K = 32
     
-    k2mm_kernel[grid](A, B, C, D, tmp, alpha, beta, NI, NJ, NK, NL)
+    # First phase: compute tmp = alpha * A * B
+    grid_i = triton.cdiv(NI, BLOCK_SIZE_I)
+    grid_j = triton.cdiv(NJ, BLOCK_SIZE_J)
+    
+    k2mm_kernel[(grid_i, grid_j)](
+        A, B, C, D, tmp, alpha, beta, NI, NJ, NK, NL,
+        A.stride(0), A.stride(1),
+        B.stride(0), B.stride(1),
+        C.stride(0), C.stride(1),
+        D.stride(0), D.stride(1),
+        tmp.stride(0), tmp.stride(1),
+        BLOCK_SIZE_I=BLOCK_SIZE_I,
+        BLOCK_SIZE_J=BLOCK_SIZE_J,
+        BLOCK_SIZE_K=BLOCK_SIZE_K,
+        PHASE=0
+    )
+    
+    # Second phase: compute D = beta * D + tmp * C
+    grid_j = triton.cdiv(NL, BLOCK_SIZE_J)
+    
+    k2mm_kernel[(grid_i, grid_j)](
+        A, B, C, D, tmp, alpha, beta, NI, NJ, NK, NL,
+        A.stride(0), A.stride(1),
+        B.stride(0), B.stride(1),
+        C.stride(0), C.stride(1),
+        D.stride(0), D.stride(1),
+        tmp.stride(0), tmp.stride(1),
+        BLOCK_SIZE_I=BLOCK_SIZE_I,
+        BLOCK_SIZE_J=BLOCK_SIZE_J,
+        BLOCK_SIZE_K=BLOCK_SIZE_K,
+        PHASE=1
+    )

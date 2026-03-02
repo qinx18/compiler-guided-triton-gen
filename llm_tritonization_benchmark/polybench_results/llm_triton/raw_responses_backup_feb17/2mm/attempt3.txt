@@ -1,0 +1,262 @@
+
+## PREVIOUS ATTEMPT FAILED - NUMERICAL ERROR
+
+Your last attempt produced incorrect numerical results.
+
+**Error type**: Numerical error (values don't match)
+**Max error observed**: 5.740967e-01
+
+Please fix the numerical computation. Common causes:
+- Incorrect loop bounds or indices
+- Wrong array access patterns (row-major vs column-major)
+- Missing or incorrect operations
+- Off-by-one errors
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def k2mm_kernel_first(A, B, tmp, alpha, NI, NJ, NK,
+                      BLOCK_SIZE_I: tl.constexpr, BLOCK_SIZE_J: tl.constexpr):
+    # First stage: tmp[i][j] = alpha * sum(A[i][k] * B[k][j])
+    pid_i = tl.program_id(0)
+    pid_j = tl.program_id(1)
+    
+    i_start = pid_i * BLOCK_SIZE_I
+    j_start = pid_j * BLOCK_SIZE_J
+    
+    i_offsets = tl.arange(0, BLOCK_SIZE_I)
+    j_offsets = tl.arange(0, BLOCK_SIZE_J)
+    k_offsets = tl.arange(0, 32)
+    
+    i_indices = i_start + i_offsets
+    j_indices = j_start + j_offsets
+    
+    i_mask = i_indices < NI
+    j_mask = j_indices < NJ
+    
+    acc = tl.zeros((BLOCK_SIZE_I, BLOCK_SIZE_J), dtype=tl.float32)
+    
+    for k_start in range(0, NK, 32):
+        k_indices = k_start + k_offsets
+        k_mask = k_indices < NK
+        
+        # Load A[i, k]
+        a_ptrs = A + i_indices[:, None] * NK + k_indices[None, :]
+        a_mask = i_mask[:, None] & k_mask[None, :]
+        a_vals = tl.load(a_ptrs, mask=a_mask, other=0.0)
+        
+        # Load B[k, j]
+        b_ptrs = B + k_indices[:, None] * NJ + j_indices[None, :]
+        b_mask = k_mask[:, None] & j_mask[None, :]
+        b_vals = tl.load(b_ptrs, mask=b_mask, other=0.0)
+        
+        acc += tl.dot(a_vals, b_vals)
+    
+    # Store tmp with alpha scaling
+    tmp_vals = alpha * acc
+    tmp_ptrs = tmp + i_indices[:, None] * NJ + j_indices[None, :]
+    store_mask = i_mask[:, None] & j_mask[None, :]
+    tl.store(tmp_ptrs, tmp_vals, mask=store_mask)
+
+@triton.jit
+def k2mm_kernel_second(tmp, C, D, beta, NI, NJ, NL,
+                       BLOCK_SIZE_I: tl.constexpr, BLOCK_SIZE_L: tl.constexpr):
+    # Second stage: D[i][j] = beta * D[i][j] + sum(tmp[i][k] * C[k][j])
+    pid_i = tl.program_id(0)
+    pid_l = tl.program_id(1)
+    
+    i_start = pid_i * BLOCK_SIZE_I
+    l_start = pid_l * BLOCK_SIZE_L
+    
+    i_offsets = tl.arange(0, BLOCK_SIZE_I)
+    l_offsets = tl.arange(0, BLOCK_SIZE_L)
+    j_offsets = tl.arange(0, 32)
+    
+    i_indices = i_start + i_offsets
+    l_indices = l_start + l_offsets
+    
+    i_mask = i_indices < NI
+    l_mask = l_indices < NL
+    
+    # Load and scale D by beta
+    d_ptrs = D + i_indices[:, None] * NL + l_indices[None, :]
+    d_mask = i_mask[:, None] & l_mask[None, :]
+    d_vals = tl.load(d_ptrs, mask=d_mask, other=0.0)
+    acc = beta * d_vals
+    
+    # Accumulate tmp * C
+    for j_start in range(0, NJ, 32):
+        j_indices = j_start + j_offsets
+        j_mask = j_indices < NJ
+        
+        # Load tmp[i, j]
+        tmp_ptrs = tmp + i_indices[:, None] * NJ + j_indices[None, :]
+        tmp_mask = i_mask[:, None] & j_mask[None, :]
+        tmp_vals = tl.load(tmp_ptrs, mask=tmp_mask, other=0.0)
+        
+        # Load C[j, l]
+        c_ptrs = C + j_indices[:, None] * NL + l_indices[None, :]
+        c_mask = j_mask[:, None] & l_mask[None, :]
+        c_vals = tl.load(c_ptrs, mask=c_mask, other=0.0)
+        
+        acc += tl.dot(tmp_vals, c_vals)
+    
+    # Store result
+    tl.store(d_ptrs, acc, mask=d_mask)
+
+def k2mm_triton(A, B, C, D, tmp, alpha, beta, NI, NJ, NK, NL):
+    BLOCK_SIZE_I = 16
+    BLOCK_SIZE_J = 16
+    BLOCK_SIZE_L = 16
+    
+    # First stage: compute tmp = alpha * A * B
+    grid1 = (triton.cdiv(NI, BLOCK_SIZE_I), triton.cdiv(NJ, BLOCK_SIZE_J))
+    k2mm_kernel_first[grid1](
+        A, B, tmp, alpha, NI, NJ, NK,
+        BLOCK_SIZE_I=BLOCK_SIZE_I, BLOCK_SIZE_J=BLOCK_SIZE_J
+    )
+    
+    # Second stage: compute D = tmp * C + beta * D
+    grid2 = (triton.cdiv(NI, BLOCK_SIZE_I), triton.cdiv(NL, BLOCK_SIZE_L))
+    k2mm_kernel_second[grid2](
+        tmp, C, D, beta, NI, NJ, NL,
+        BLOCK_SIZE_I=BLOCK_SIZE_I, BLOCK_SIZE_L=BLOCK_SIZE_L
+    )
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define NI 40
+#define NJ 50
+#define NK 70
+#define NL 80
+
+float tmp[NI][NJ];
+float A[NI][NK];
+float B[NK][NJ];
+float C[NJ][NL];
+float D[NI][NL];
+
+float alpha = 1.5f;
+float beta = 1.2f;
+
+void k2mm_kernel() {
+  int i, j, k;
+#pragma scop
+  /* D := alpha*A*B*C + beta*D */
+  for (i = 0; i < NI; i++)
+    for (j = 0; j < NJ; j++)
+      {
+	tmp[i][j] = 0.0;
+	for (k = 0; k < NK; ++k)
+	  tmp[i][j] += alpha * A[i][k] * B[k][j];
+      }
+  for (i = 0; i < NI; i++)
+    for (j = 0; j < NL; j++)
+      {
+	D[i][j] *= beta;
+	for (k = 0; k < NJ; ++k)
+	  D[i][j] += tmp[i][k] * C[k][j];
+      }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+/* D := alpha*A*B*C + beta*D */
+  for (i = 0; i < NI; i++)
+    for (j = 0; j < NJ; j++)
+      {
+	tmp[i][j] = 0.0;
+	for (k = 0; k < NK; ++k)
+	  tmp[i][j] += alpha * A[i][k] * B[k][j];
+      }
+  for (i = 0; i < NI; i++)
+    for (j = 0; j < NL; j++)
+      {
+	D[i][j] *= beta;
+	for (k = 0; k < NJ; ++k)
+	  D[i][j] += tmp[i][k] * C[k][j];
+      }
+```
+
+
+## Array Information:
+- `A`: read-only
+- `B`: read-only
+- `C`: read-only
+- `D`: read-write
+- `tmp`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `NI` = 40
+- `NJ` = 50
+- `NK` = 70
+- `NL` = 80
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `k2mm_kernel`
+2. Includes a Python wrapper function named `k2mm_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def k2mm_triton(A, B, C, D, tmp, alpha, beta, NI, NJ, NK, NL):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 3 of 5. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

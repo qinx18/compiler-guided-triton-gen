@@ -1,0 +1,185 @@
+
+## PREVIOUS ATTEMPT FAILED - NUMERICAL ERROR
+
+Your last attempt produced incorrect numerical results.
+
+**Error type**: Numerical error (values don't match)
+**Max error observed**: 3.544766e-02
+
+Please fix the numerical computation. Common causes:
+- Incorrect loop bounds or indices
+- Wrong array access patterns (row-major vs column-major)
+- Missing or incorrect operations
+- Off-by-one errors
+- Cloning input arrays instead of modifying them in-place (the test checks the original tensors)
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def seidel_2d_kernel(A_ptr, N, TSTEPS, BLOCK_SIZE: tl.constexpr):
+    # Sequential time steps - must be done one at a time for Gauss-Seidel
+    for t in range(TSTEPS):
+        # Process rows sequentially within each time step
+        for row in range(1, N - 1):
+            # Get program ID for column processing
+            pid = tl.program_id(0)
+            
+            # Calculate column indices for this block
+            block_start = pid * BLOCK_SIZE
+            offsets = tl.arange(0, BLOCK_SIZE)
+            j = block_start + offsets + 1  # +1 because we start from column 1
+            mask = j < (N - 1)  # j ranges from 1 to N-2
+            
+            # Calculate linear indices for 3x3 stencil
+            center_idx = row * N + j
+            
+            # Top row
+            top_left = (row - 1) * N + (j - 1)
+            top_center = (row - 1) * N + j
+            top_right = (row - 1) * N + (j + 1)
+            
+            # Middle row
+            mid_left = row * N + (j - 1)
+            mid_right = row * N + (j + 1)
+            
+            # Bottom row
+            bottom_left = (row + 1) * N + (j - 1)
+            bottom_center = (row + 1) * N + j
+            bottom_right = (row + 1) * N + (j + 1)
+            
+            # Load all 9 stencil values
+            val_tl = tl.load(A_ptr + top_left, mask=mask)
+            val_tc = tl.load(A_ptr + top_center, mask=mask)
+            val_tr = tl.load(A_ptr + top_right, mask=mask)
+            val_ml = tl.load(A_ptr + mid_left, mask=mask)
+            val_center = tl.load(A_ptr + center_idx, mask=mask)
+            val_mr = tl.load(A_ptr + mid_right, mask=mask)
+            val_bl = tl.load(A_ptr + bottom_left, mask=mask)
+            val_bc = tl.load(A_ptr + bottom_center, mask=mask)
+            val_br = tl.load(A_ptr + bottom_right, mask=mask)
+            
+            # Compute the 9-point stencil average
+            result = (val_tl + val_tc + val_tr + val_ml + val_center + val_mr + val_bl + val_bc + val_br) / 9.0
+            
+            # Store result back to center position
+            tl.store(A_ptr + center_idx, result, mask=mask)
+
+def seidel_2d_triton(A, N, TSTEPS):
+    # Number of columns to process (excluding boundaries)
+    inner_cols = N - 2
+    
+    if inner_cols <= 0:
+        return
+    
+    BLOCK_SIZE = 256
+    grid_size = triton.cdiv(inner_cols, BLOCK_SIZE)
+    
+    # Launch kernel
+    seidel_2d_kernel[(grid_size,)](
+        A, N, TSTEPS, BLOCK_SIZE
+    )
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define TSTEPS 40
+#define N 120
+
+float A[N][N];
+
+void seidel_2d_kernel() {
+  int t, i, j;
+#pragma scop
+  for (t = 0; t <= TSTEPS - 1; t++)
+    for (i = 1; i<= N - 2; i++)
+      for (j = 1; j <= N - 2; j++)
+	A[i][j] = (A[i-1][j-1] + A[i-1][j] + A[i-1][j+1]
+		   + A[i][j-1] + A[i][j] + A[i][j+1]
+		   + A[i+1][j-1] + A[i+1][j] + A[i+1][j+1])/9.0;
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (t = 0; t <= TSTEPS - 1; t++)
+    for (i = 1; i<= N - 2; i++)
+      for (j = 1; j <= N - 2; j++)
+	A[i][j] = (A[i-1][j-1] + A[i-1][j] + A[i-1][j+1]
+		   + A[i][j-1] + A[i][j] + A[i][j+1]
+		   + A[i+1][j-1] + A[i+1][j] + A[i+1][j+1])/9.0;
+```
+
+
+## Array Information:
+- `A`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `N` = 120
+- `TSTEPS` = 40
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `seidel_2d_kernel`
+2. Includes a Python wrapper function named `seidel_2d_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def seidel_2d_triton(A, N, TSTEPS):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 4 of 10. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

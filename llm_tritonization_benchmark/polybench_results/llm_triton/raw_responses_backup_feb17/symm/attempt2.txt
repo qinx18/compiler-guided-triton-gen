@@ -1,0 +1,213 @@
+
+## PREVIOUS ATTEMPT FAILED - NUMERICAL ERROR
+
+Your last attempt produced incorrect numerical results.
+
+**Error type**: Numerical error (values don't match)
+**Max error observed**: 4.771926e+01
+
+Please fix the numerical computation. Common causes:
+- Incorrect loop bounds or indices
+- Wrong array access patterns (row-major vs column-major)
+- Missing or incorrect operations
+- Off-by-one errors
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def symm_kernel(A_ptr, B_ptr, C_ptr, alpha, beta, M, N, stride_A0, stride_A1, stride_B0, stride_B1, stride_C0, stride_C1, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    
+    # Each program handles one (i, j) pair
+    i = pid // N
+    j = pid % N
+    
+    if i >= M or j >= N:
+        return
+    
+    # Vectorized computation for k < i
+    temp2 = 0.0
+    k_offsets = tl.arange(0, BLOCK_SIZE)
+    
+    for k_start in range(0, i, BLOCK_SIZE):
+        current_k = k_start + k_offsets
+        k_mask = (current_k < i)
+        
+        # Load A[i, k] values
+        A_ik_ptr = A_ptr + i * stride_A0 + current_k * stride_A1
+        A_ik = tl.load(A_ik_ptr, mask=k_mask, other=0.0)
+        
+        # Load B[i, j] (scalar broadcast)
+        B_ij_ptr = B_ptr + i * stride_B0 + j * stride_B1
+        B_ij = tl.load(B_ij_ptr)
+        
+        # Load B[k, j] values
+        B_kj_ptr = B_ptr + current_k * stride_B0 + j * stride_B1
+        B_kj = tl.load(B_kj_ptr, mask=k_mask, other=0.0)
+        
+        # Load C[k, j] values
+        C_kj_ptr = C_ptr + current_k * stride_C0 + j * stride_C1
+        C_kj = tl.load(C_kj_ptr, mask=k_mask, other=0.0)
+        
+        # Update C[k, j] += alpha * B[i, j] * A[i, k]
+        C_kj_new = C_kj + alpha * B_ij * A_ik
+        tl.store(C_kj_ptr, C_kj_new, mask=k_mask)
+        
+        # Accumulate temp2 += B[k, j] * A[i, k]
+        temp2_contrib = tl.sum(B_kj * A_ik, axis=0)
+        temp2 += temp2_contrib
+    
+    # Load current C[i, j]
+    C_ij_ptr = C_ptr + i * stride_C0 + j * stride_C1
+    C_ij = tl.load(C_ij_ptr)
+    
+    # Load A[i, i]
+    A_ii_ptr = A_ptr + i * stride_A0 + i * stride_A1
+    A_ii = tl.load(A_ii_ptr)
+    
+    # Load B[i, j]
+    B_ij_ptr = B_ptr + i * stride_B0 + j * stride_B1
+    B_ij = tl.load(B_ij_ptr)
+    
+    # Update C[i, j]
+    C_ij_new = beta * C_ij + alpha * B_ij * A_ii + alpha * temp2
+    tl.store(C_ij_ptr, C_ij_new)
+
+def symm_triton(A, B, C, alpha, beta, M, N):
+    # Grid: one program per (i, j) pair
+    grid = (M * N,)
+    
+    # Block size for vectorized k loop
+    BLOCK_SIZE = 32
+    
+    symm_kernel[grid](
+        A, B, C,
+        alpha, beta, M, N,
+        A.stride(0), A.stride(1),
+        B.stride(0), B.stride(1),
+        C.stride(0), C.stride(1),
+        BLOCK_SIZE=BLOCK_SIZE
+    )
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define M 60
+#define N 80
+
+float C[M][N];
+float A[M][M];
+float B[M][N];
+
+float alpha = 1.5f;
+float beta = 1.2f;
+
+// Local variables from kernel function
+float temp2;
+
+void symm_kernel() {
+  int i, j, k;
+#pragma scop
+   for (i = 0; i < M; i++)
+      for (j = 0; j < N; j++ )
+      {
+        temp2 = 0;
+        for (k = 0; k < i; k++) {
+           C[k][j] += alpha*B[i][j] * A[i][k];
+           temp2 += B[k][j] * A[i][k];
+        }
+        C[i][j] = beta * C[i][j] + alpha*B[i][j] * A[i][i] + alpha * temp2;
+     }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (i = 0; i < M; i++)
+      for (j = 0; j < N; j++ )
+      {
+        temp2 = 0;
+        for (k = 0; k < i; k++) {
+           C[k][j] += alpha*B[i][j] * A[i][k];
+           temp2 += B[k][j] * A[i][k];
+        }
+        C[i][j] = beta * C[i][j] + alpha*B[i][j] * A[i][i] + alpha * temp2;
+     }
+```
+
+
+## Array Information:
+- `A`: read-only
+- `B`: read-only
+- `C`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `M` = 60
+- `N` = 80
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `symm_kernel`
+2. Includes a Python wrapper function named `symm_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def symm_triton(A, B, C, alpha, beta, M, N):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 2 of 5. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

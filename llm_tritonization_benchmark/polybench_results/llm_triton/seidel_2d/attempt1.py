@@ -3,50 +3,56 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def seidel_2d_kernel(A, N, BLOCK_SIZE: tl.constexpr):
-    block_start = tl.program_id(0) * BLOCK_SIZE
-    offsets = tl.arange(0, BLOCK_SIZE)
-    indices = block_start + offsets
+def seidel_2d_kernel(A, N, TSTEPS, BLOCK_SIZE_I: tl.constexpr, BLOCK_SIZE_J: tl.constexpr):
+    pid_t = tl.program_id(0)
+    pid_i = tl.program_id(1)
+    pid_j = tl.program_id(2)
     
-    mask = indices < (N - 2) * (N - 2)
+    i_offsets = tl.arange(0, BLOCK_SIZE_I)
+    j_offsets = tl.arange(0, BLOCK_SIZE_J)
     
-    for t in range(40):  # TSTEPS = 40
-        valid_indices = tl.where(mask, indices, 0)
-        i = (valid_indices // (N - 2)) + 1
-        j = (valid_indices % (N - 2)) + 1
+    for t in range(TSTEPS):
+        i_base = 1 + pid_i * BLOCK_SIZE_I
+        j_base = 1 + pid_j * BLOCK_SIZE_J
         
-        # Load all 9 neighbors
-        idx_center = i * N + j
-        idx_top_left = (i - 1) * N + (j - 1)
-        idx_top = (i - 1) * N + j
-        idx_top_right = (i - 1) * N + (j + 1)
-        idx_left = i * N + (j - 1)
-        idx_right = i * N + (j + 1)
-        idx_bottom_left = (i + 1) * N + (j - 1)
-        idx_bottom = (i + 1) * N + j
-        idx_bottom_right = (i + 1) * N + (j + 1)
+        i_indices = i_base + i_offsets
+        j_indices = j_base + j_offsets
         
-        val_center = tl.load(A + idx_center, mask=mask)
-        val_top_left = tl.load(A + idx_top_left, mask=mask)
-        val_top = tl.load(A + idx_top, mask=mask)
-        val_top_right = tl.load(A + idx_top_right, mask=mask)
-        val_left = tl.load(A + idx_left, mask=mask)
-        val_right = tl.load(A + idx_right, mask=mask)
-        val_bottom_left = tl.load(A + idx_bottom_left, mask=mask)
-        val_bottom = tl.load(A + idx_bottom, mask=mask)
-        val_bottom_right = tl.load(A + idx_bottom_right, mask=mask)
+        i_mask = (i_indices >= 1) & (i_indices <= N - 2)
+        j_mask = (j_indices >= 1) & (j_indices <= N - 2)
         
-        # Compute average
-        new_val = (val_top_left + val_top + val_top_right + 
-                   val_left + val_center + val_right + 
-                   val_bottom_left + val_bottom + val_bottom_right) / 9.0
+        # Load 9-point stencil values
+        vals = tl.zeros((BLOCK_SIZE_I, BLOCK_SIZE_J), dtype=tl.float32)
+        
+        for di in range(-1, 2):
+            for dj in range(-1, 2):
+                i_load = i_indices[:, None] + di
+                j_load = j_indices[None, :] + dj
+                linear_idx = i_load * N + j_load
+                mask_2d = i_mask[:, None] & j_mask[None, :]
+                val = tl.load(A + linear_idx, mask=mask_2d, other=0.0)
+                vals += val
+        
+        vals = vals / 9.0
         
         # Store result
-        tl.store(A + idx_center, new_val, mask=mask)
+        i_store = i_indices[:, None]
+        j_store = j_indices[None, :]
+        linear_idx = i_store * N + j_store
+        mask_2d = i_mask[:, None] & j_mask[None, :]
+        tl.store(A + linear_idx, vals, mask=mask_2d)
 
 def seidel_2d_triton(A, N, TSTEPS):
-    BLOCK_SIZE = 256
-    num_elements = (N - 2) * (N - 2)
-    grid = (triton.cdiv(num_elements, BLOCK_SIZE),)
+    BLOCK_SIZE_I = 16
+    BLOCK_SIZE_J = 16
     
-    seidel_2d_kernel[grid](A, N, BLOCK_SIZE)
+    grid_i = triton.cdiv(N - 2, BLOCK_SIZE_I)
+    grid_j = triton.cdiv(N - 2, BLOCK_SIZE_J)
+    
+    grid = (1, grid_i, grid_j)
+    
+    seidel_2d_kernel[grid](
+        A, N, TSTEPS,
+        BLOCK_SIZE_I=BLOCK_SIZE_I,
+        BLOCK_SIZE_J=BLOCK_SIZE_J
+    )

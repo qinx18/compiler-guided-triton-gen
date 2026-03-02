@@ -1,0 +1,164 @@
+# LLM-Generated Triton Implementation for gemm (Polybench)
+# Generated: 2026-02-09 18:51:46
+# Model: claude-sonnet-4-20250514
+
+================================================================================
+PROMPT:
+================================================================================
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define NI 60
+#define NJ 70
+#define NK 80
+
+float C[NI][NJ];
+float A[NI][NK];
+float B[NK][NJ];
+
+float alpha = 1.5f;
+float beta = 1.2f;
+
+void gemm_kernel() {
+  int i, j, k;
+#pragma scop
+  for (i = 0; i < NI; i++) {
+    for (j = 0; j < NJ; j++)
+	C[i][j] *= beta;
+    for (k = 0; k < NK; k++) {
+       for (j = 0; j < NJ; j++)
+	  C[i][j] += alpha * A[i][k] * B[k][j];
+    }
+  }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (i = 0; i < NI; i++) {
+    for (j = 0; j < NJ; j++)
+	C[i][j] *= beta;
+    for (k = 0; k < NK; k++) {
+       for (j = 0; j < NJ; j++)
+	  C[i][j] += alpha * A[i][k] * B[k][j];
+    }
+  }
+```
+
+
+## Array Information:
+- `A`: read-only
+- `B`: read-only
+- `C`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `NI` = 60
+- `NJ` = 70
+- `NK` = 80
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `gemm_kernel`
+2. Includes a Python wrapper function named `gemm_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def gemm_triton(A, B, C, alpha, beta, NI, NJ, NK):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+================================================================================
+RESPONSE:
+================================================================================
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def gemm_kernel(A, B, C, alpha, beta, NI, NJ, NK, BLOCK_SIZE_I: tl.constexpr, BLOCK_SIZE_J: tl.constexpr):
+    pid_i = tl.program_id(0)
+    pid_j = tl.program_id(1)
+    
+    i_offsets = pid_i * BLOCK_SIZE_I + tl.arange(0, BLOCK_SIZE_I)
+    j_offsets = pid_j * BLOCK_SIZE_J + tl.arange(0, BLOCK_SIZE_J)
+    
+    i_mask = i_offsets < NI
+    j_mask = j_offsets < NJ
+    
+    # First multiply C[i][j] by beta
+    c_ptrs = C + i_offsets[:, None] * NJ + j_offsets[None, :]
+    mask_2d = i_mask[:, None] & j_mask[None, :]
+    c_vals = tl.load(c_ptrs, mask=mask_2d, other=0.0)
+    c_vals = c_vals * beta
+    
+    # Accumulate the matrix multiplication
+    for k in range(NK):
+        a_ptrs = A + i_offsets[:, None] * NK + k
+        b_ptrs = B + k * NJ + j_offsets[None, :]
+        
+        a_vals = tl.load(a_ptrs, mask=i_mask[:, None], other=0.0)
+        b_vals = tl.load(b_ptrs, mask=j_mask[None, :], other=0.0)
+        
+        c_vals += alpha * a_vals * b_vals
+    
+    tl.store(c_ptrs, c_vals, mask=mask_2d)
+
+def gemm_triton(A, B, C, alpha, beta, NI, NJ, NK):
+    BLOCK_SIZE_I = 16
+    BLOCK_SIZE_J = 16
+    
+    grid = (triton.cdiv(NI, BLOCK_SIZE_I), triton.cdiv(NJ, BLOCK_SIZE_J))
+    
+    gemm_kernel[grid](
+        A, B, C, alpha, beta, NI, NJ, NK,
+        BLOCK_SIZE_I=BLOCK_SIZE_I,
+        BLOCK_SIZE_J=BLOCK_SIZE_J
+    )
+```
