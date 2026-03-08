@@ -1,104 +1,64 @@
-import torch
 import triton
 import triton.language as tl
+import torch
 
 @triton.jit
-def covariance_kernel(cov_ptr, data_ptr, mean_ptr, float_n, M, N, BLOCK_SIZE: tl.constexpr):
-    pid = tl.program_id(0)
+def compute_mean_kernel(data_ptr, mean_ptr, N: tl.constexpr, M: tl.constexpr, float_n):
+    j = tl.program_id(0)
     
-    # Step 1: Compute means
-    if pid == 0:
-        j_offsets = tl.arange(0, BLOCK_SIZE)
-        for j_start in range(0, M, BLOCK_SIZE):
-            j_indices = j_start + j_offsets
-            j_mask = j_indices < M
-            
-            # Initialize mean to 0
-            mean_vals = tl.zeros([BLOCK_SIZE], dtype=tl.float32)
-            
-            # Sum over all rows
-            for i in range(N):
-                data_indices = i * M + j_indices
-                data_vals = tl.load(data_ptr + data_indices, mask=j_mask, other=0.0)
-                mean_vals += data_vals
-            
-            # Divide by N
-            mean_vals = mean_vals / float_n
-            
-            # Store means
-            tl.store(mean_ptr + j_indices, mean_vals, mask=j_mask)
+    if j >= M:
+        return
     
-    # Synchronize
-    tl.debug_barrier()
+    sum_val = 0.0
+    for i in range(N):
+        data_idx = i * M + j
+        sum_val += tl.load(data_ptr + data_idx)
     
-    # Step 2: Subtract means from data
-    if pid == 0:
-        for i in range(N):
-            j_offsets = tl.arange(0, BLOCK_SIZE)
-            for j_start in range(0, M, BLOCK_SIZE):
-                j_indices = j_start + j_offsets
-                j_mask = j_indices < M
-                
-                data_indices = i * M + j_indices
-                data_vals = tl.load(data_ptr + data_indices, mask=j_mask, other=0.0)
-                mean_vals = tl.load(mean_ptr + j_indices, mask=j_mask, other=0.0)
-                
-                data_vals = data_vals - mean_vals
-                tl.store(data_ptr + data_indices, data_vals, mask=j_mask)
+    mean_val = sum_val / float_n
+    tl.store(mean_ptr + j, mean_val)
+
+@triton.jit
+def subtract_mean_kernel(data_ptr, mean_ptr, N: tl.constexpr, M: tl.constexpr):
+    i = tl.program_id(0)
     
-    # Synchronize
-    tl.debug_barrier()
+    if i >= N:
+        return
     
-    # Step 3: Compute covariance matrix
-    if pid == 0:
-        i_offsets = tl.arange(0, BLOCK_SIZE)
-        for i_start in range(0, M, BLOCK_SIZE):
-            i_indices = i_start + i_offsets
-            i_mask = i_indices < M
-            
-            for i_idx in range(BLOCK_SIZE):
-                if i_start + i_idx >= M:
-                    break
-                    
-                i_val = i_start + i_idx
-                
-                j_offsets = tl.arange(0, BLOCK_SIZE)
-                for j_start in range(i_val, M, BLOCK_SIZE):
-                    j_indices = j_start + j_offsets
-                    j_mask = (j_indices < M) & (j_indices >= i_val)
-                    
-                    # Initialize covariance to 0
-                    cov_vals = tl.zeros([BLOCK_SIZE], dtype=tl.float32)
-                    
-                    # Sum over all rows
-                    for k in range(N):
-                        data_i_vals = tl.load(data_ptr + k * M + i_val)
-                        data_j_indices = k * M + j_indices
-                        data_j_vals = tl.load(data_ptr + data_j_indices, mask=j_mask, other=0.0)
-                        cov_vals += data_i_vals * data_j_vals
-                    
-                    # Divide by (N - 1)
-                    cov_vals = cov_vals / (float_n - 1.0)
-                    
-                    # Store upper triangular
-                    cov_indices = i_val * M + j_indices
-                    tl.store(cov_ptr + cov_indices, cov_vals, mask=j_mask)
-                    
-                    # Store lower triangular (symmetric)
-                    for j_idx in range(BLOCK_SIZE):
-                        if j_start + j_idx >= M or j_start + j_idx < i_val:
-                            continue
-                        j_val = j_start + j_idx
-                        if j_val != i_val:
-                            cov_val = tl.load(cov_ptr + i_val * M + j_val)
-                            tl.store(cov_ptr + j_val * M + i_val, cov_val)
+    for j in range(M):
+        data_idx = i * M + j
+        mean_val = tl.load(mean_ptr + j)
+        data_val = tl.load(data_ptr + data_idx)
+        tl.store(data_ptr + data_idx, data_val - mean_val)
+
+@triton.jit
+def compute_covariance_kernel(data_ptr, cov_ptr, N: tl.constexpr, M: tl.constexpr, float_n):
+    i = tl.program_id(0)
+    
+    if i >= M:
+        return
+    
+    for j in range(i, M):
+        cov_val = 0.0
+        for k in range(N):
+            data_ki = tl.load(data_ptr + k * M + i)
+            data_kj = tl.load(data_ptr + k * M + j)
+            cov_val += data_ki * data_kj
+        
+        cov_val = cov_val / (float_n - 1.0)
+        
+        # Store symmetric values
+        tl.store(cov_ptr + i * M + j, cov_val)
+        tl.store(cov_ptr + j * M + i, cov_val)
 
 def covariance_triton(cov, data, mean, float_n, M, N):
-    BLOCK_SIZE = 32
+    # Phase 1: Compute mean
+    grid = (M,)
+    compute_mean_kernel[grid](data, mean, N, M, float_n)
     
-    grid = (1,)
+    # Phase 2: Subtract mean from data
+    grid = (N,)
+    subtract_mean_kernel[grid](data, mean, N, M)
     
-    covariance_kernel[grid](
-        cov, data, mean, float_n, M, N,
-        BLOCK_SIZE=BLOCK_SIZE
-    )
+    # Phase 3: Compute covariance matrix
+    grid = (M,)
+    compute_covariance_kernel[grid](data, cov, N, M, float_n)

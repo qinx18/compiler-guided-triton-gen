@@ -1,0 +1,284 @@
+# LLM-Generated Triton Implementation for hotspot (Rodinia)
+# Generated: 2026-03-05 17:30:22
+# Model: claude-sonnet-4-20250514
+
+================================================================================
+PROMPT:
+================================================================================
+I have a Rodinia benchmark kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+/* Rodinia hotspot: 2D thermal stencil (interior only, skip boundary) */
+/* Simplified from gpu-rodinia/openmp/hotspot/hotspot_openmp.cpp */
+
+#define ROWS 256
+#define COLS 256
+#define TSTEPS 10
+
+float temp[ROWS][COLS];
+float power[ROWS][COLS];
+float result[ROWS][COLS];
+
+/* Precomputed thermal constants */
+float Cap_1 = 0.0002f;
+float Rx_1 = 51200.0f;
+float Ry_1 = 51200.0f;
+float Rz_1 = 320000.0f;
+float amb_temp = 80.0f;
+
+void hotspot_kernel() {
+  int t, r, c;
+#pragma scop
+  for (t = 0; t < TSTEPS; t++) {
+    /* Compute interior points using 5-point stencil */
+    for (r = 1; r < ROWS - 1; r++) {
+      for (c = 1; c < COLS - 1; c++) {
+        result[r][c] = temp[r][c] +
+          Cap_1 * (power[r][c]
+            + (temp[r + 1][c] + temp[r - 1][c] - 2.0f * temp[r][c]) * Ry_1
+            + (temp[r][c + 1] + temp[r][c - 1] - 2.0f * temp[r][c]) * Rx_1
+            + (amb_temp - temp[r][c]) * Rz_1);
+      }
+    }
+    /* Copy result back to temp for next timestep */
+    for (r = 1; r < ROWS - 1; r++) {
+      for (c = 1; c < COLS - 1; c++) {
+        temp[r][c] = result[r][c];
+      }
+    }
+  }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+/* 2D thermal stencil with timestep loop (interior only) */
+  for (t = 0; t < TSTEPS; t++) {
+    /* Compute interior points using 5-point stencil */
+    for (r = 1; r < ROWS - 1; r++) {
+      for (c = 1; c < COLS - 1; c++) {
+        result[r][c] = temp[r][c] +
+          Cap_1 * (power[r][c]
+            + (temp[r + 1][c] + temp[r - 1][c] - 2.0f * temp[r][c]) * Ry_1
+            + (temp[r][c + 1] + temp[r][c - 1] - 2.0f * temp[r][c]) * Rx_1
+            + (amb_temp - temp[r][c]) * Rz_1);
+      }
+    }
+    /* Copy result back to temp for next timestep */
+    for (r = 1; r < ROWS - 1; r++) {
+      for (c = 1; c < COLS - 1; c++) {
+        temp[r][c] = result[r][c];
+      }
+    }
+  }
+```
+
+## Parallelization Analysis
+
+**Loop dimensions**: ['t', 'r', 'c']
+
+- Parallelize `t`, sequential `r`: INVALID
+  - `t` is a sequential context loop (e.g. timestep) — must remain sequential
+
+- Parallelize `r`, sequential `t`: VALID
+
+- Parallelize `c`, sequential `t`: VALID
+
+**Both `r` and `c` are freely parallelizable.** Use a 2D grid to parallelize both simultaneously for best GPU occupancy.
+
+**CRITICAL: Timestep/phase structure**: Use `grid=(1,)` with the `t` loop **INSIDE** the kernel. This puts everything in a single kernel launch, avoiding kernel launch overhead entirely.
+```python
+kernel[grid=(1,)](...)  # ONE kernel launch — t loop inside
+```
+With `grid=(1,)` (single thread block), the `t` loop inside the kernel is correct — there are no cross-CTA race conditions because there is only one CTA. All phases execute sequentially within each timestep, and the `t` loop iterates normally.
+
+**Inside the kernel**: Use 2D tiling to process all elements:
+```python
+for t in range(TSTEPS):
+    for row_start in range(0, N_ROWS, BLOCK_ROW):
+        for col_start in range(0, N_COLS, BLOCK_COL):
+            # vectorize within each tile
+```
+Process all phases for each timestep sequentially within the kernel. Vectorize the column dimension with `tl.arange(0, BLOCK_COL)`.
+
+
+## Array Information:
+- `power`: read-only
+- `result`: read-write
+- `temp`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `COLS` = 256
+- `ROWS` = 256
+- `TSTEPS` = 10
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `hotspot_kernel`
+2. Includes a Python wrapper function named `hotspot_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def hotspot_triton(power, result, temp, Cap_1, Rx_1, Ry_1, Rz_1, amb_temp, COLS, ROWS, TSTEPS):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+================================================================================
+RESPONSE:
+================================================================================
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def hotspot_kernel(
+    power_ptr, result_ptr, temp_ptr,
+    Cap_1, Rx_1, Ry_1, Rz_1, amb_temp,
+    COLS: tl.constexpr, ROWS: tl.constexpr, TSTEPS: tl.constexpr,
+    BLOCK_ROW: tl.constexpr, BLOCK_COL: tl.constexpr
+):
+    # Define offsets once at start
+    row_offsets = tl.arange(0, BLOCK_ROW)
+    col_offsets = tl.arange(0, BLOCK_COL)
+    
+    for t in range(TSTEPS):
+        # Compute interior points using 5-point stencil
+        for row_start in range(1, ROWS - 1, BLOCK_ROW):
+            for col_start in range(1, COLS - 1, BLOCK_COL):
+                # Current tile coordinates
+                rows = row_start + row_offsets
+                cols = col_start + col_offsets
+                
+                # Create masks for valid interior points
+                row_mask = (rows >= 1) & (rows < ROWS - 1)
+                col_mask = (cols >= 1) & (cols < COLS - 1)
+                
+                # Create 2D masks
+                mask = row_mask[:, None] & col_mask[None, :]
+                
+                # Compute linear indices for 2D access
+                indices = rows[:, None] * COLS + cols[None, :]
+                
+                # Load current temperature values
+                temp_vals = tl.load(temp_ptr + indices, mask=mask)
+                
+                # Load power values
+                power_vals = tl.load(power_ptr + indices, mask=mask)
+                
+                # Load neighbor values for stencil
+                # North: temp[r-1][c]
+                north_indices = (rows[:, None] - 1) * COLS + cols[None, :]
+                temp_north = tl.load(temp_ptr + north_indices, mask=mask)
+                
+                # South: temp[r+1][c]
+                south_indices = (rows[:, None] + 1) * COLS + cols[None, :]
+                temp_south = tl.load(temp_ptr + south_indices, mask=mask)
+                
+                # West: temp[r][c-1]
+                west_indices = rows[:, None] * COLS + (cols[None, :] - 1)
+                temp_west = tl.load(temp_ptr + west_indices, mask=mask)
+                
+                # East: temp[r][c+1]
+                east_indices = rows[:, None] * COLS + (cols[None, :] + 1)
+                temp_east = tl.load(temp_ptr + east_indices, mask=mask)
+                
+                # Compute 5-point stencil
+                result_vals = temp_vals + Cap_1 * (
+                    power_vals +
+                    (temp_south + temp_north - 2.0 * temp_vals) * Ry_1 +
+                    (temp_east + temp_west - 2.0 * temp_vals) * Rx_1 +
+                    (amb_temp - temp_vals) * Rz_1
+                )
+                
+                # Store results
+                tl.store(result_ptr + indices, result_vals, mask=mask)
+        
+        # Copy result back to temp for next timestep
+        for row_start in range(1, ROWS - 1, BLOCK_ROW):
+            for col_start in range(1, COLS - 1, BLOCK_COL):
+                # Current tile coordinates
+                rows = row_start + row_offsets
+                cols = col_start + col_offsets
+                
+                # Create masks for valid interior points
+                row_mask = (rows >= 1) & (rows < ROWS - 1)
+                col_mask = (cols >= 1) & (cols < COLS - 1)
+                
+                # Create 2D masks
+                mask = row_mask[:, None] & col_mask[None, :]
+                
+                # Compute linear indices
+                indices = rows[:, None] * COLS + cols[None, :]
+                
+                # Copy result to temp
+                result_vals = tl.load(result_ptr + indices, mask=mask)
+                tl.store(temp_ptr + indices, result_vals, mask=mask)
+
+def hotspot_triton(power, result, temp, Cap_1, Rx_1, Ry_1, Rz_1, amb_temp, COLS, ROWS, TSTEPS):
+    BLOCK_ROW = 16
+    BLOCK_COL = 16
+    
+    # Single kernel launch with t loop inside
+    grid = (1,)
+    
+    hotspot_kernel[grid](
+        power, result, temp,
+        Cap_1, Rx_1, Ry_1, Rz_1, amb_temp,
+        COLS, ROWS, TSTEPS,
+        BLOCK_ROW, BLOCK_COL
+    )
+```

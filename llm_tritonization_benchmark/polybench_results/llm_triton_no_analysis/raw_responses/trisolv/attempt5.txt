@@ -1,90 +1,90 @@
 
-## PREVIOUS ATTEMPT FAILED
+## PREVIOUS ATTEMPT HAS LOW PERFORMANCE - NEEDS BETTER PARALLELIZATION
 
-**Error type**: unknown
-**Error message**:
-```
-  Test 1: ERROR - at 5:16:
-def trisolv_kernel(L_ptr, b_ptr, x_ptr, N, L_stride):
-    BLOCK_SIZE = 128
+Your last attempt is CORRECT but has very low performance (speedup: 0.055982x).
+This indicates the code is NOT properly parallelized for GPU execution.
 
-    # Define offsets once outside the loop
-    j_offsets = tl.arange(0, BLOCK_SIZE)
-                ^
-  Test 2: ERROR - at 5:16:
-def trisolv_kernel(L_ptr, b_ptr, x_ptr, N, L_stride):
-    BLOCK_SIZE = 128
+**CRITICAL ISSUE**: Your kernel is likely running sequentially instead of in parallel.
 
-    # Define offsets once outside the loop
-    j_offsets = tl.arange(0, BLOCK_SIZE)
-                ^
-  Test 3: ERROR - at 5:16:
-def trisolv_kernel(L_ptr, b_ptr, x_ptr, N, L_stride):
-    BLOCK_SIZE = 128
+**Common parallelization mistakes to fix**:
+1. Using `grid=(1,)` with a single thread doing all work — this is SEQUENTIAL on GPU!
+2. Using scalar `tl.load`/`tl.store` in a Python for loop instead of vectorized block operations
+3. NOT using `tl.program_id(0)` to distribute work across GPU blocks
+4. Processing ALL elements in one block instead of splitting across multiple blocks
 
-    # Define offsets once outside the loop
-    j_offsets = tl.arange(0, BLOCK_SIZE)
-                ^
-Some tests FAILED!
-
+**CORRECT parallel pattern** (each block handles different elements):
+```python
+@triton.jit
+def kernel(..., BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)                    # Get unique block ID
+    block_start = pid * BLOCK_SIZE            # Each block starts at different offset
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # Each block handles BLOCK_SIZE elements
+    mask = offsets < n_elements
+    # Load, compute, store for THIS block only - NO for loop over all elements!
 ```
 
-Please fix the error.
+**For 2D kernels**, parallelize the outer loop dimension:
+```python
+@triton.jit
+def kernel(..., N, BLOCK_SIZE: tl.constexpr):
+    row = tl.program_id(0)  # Each block handles one row
+    col_offsets = tl.arange(0, BLOCK_SIZE)
+    # Process row 'row' with vectorized column access
+```
 
-## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+## LAST ATTEMPT (NEEDS PARALLELIZATION FIX):
 ```python
 import triton
 import triton.language as tl
 import torch
 
 @triton.jit
-def trisolv_kernel(L_ptr, b_ptr, x_ptr, N, L_stride):
-    BLOCK_SIZE = 128
+def trisolv_kernel(L_ptr, b_ptr, x_ptr, row_to_process: tl.constexpr, N: tl.constexpr, stride_L: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    # Initialize x[row] = b[row]
+    b_val = tl.load(b_ptr + row_to_process)
+    x_val = b_val
     
-    # Define offsets once outside the loop
-    j_offsets = tl.arange(0, BLOCK_SIZE)
+    # Compute sum of L[row][j] * x[j] for j < row using vectorized loads
+    col_offsets = tl.arange(0, BLOCK_SIZE)
     
-    # Process each row sequentially
-    for i in range(N):
-        # Initialize x[i] with b[i]
-        b_i = tl.load(b_ptr + i)
-        x_i = b_i
+    for block_start in range(0, row_to_process, BLOCK_SIZE):
+        current_cols = block_start + col_offsets
+        mask = current_cols < row_to_process
         
-        # Compute sum of L[i][j] * x[j] for j < i
-        if i > 0:
-            # Process in blocks
-            sum_val = 0.0
-            for j_start in range(0, i, BLOCK_SIZE):
-                current_j_offsets = j_start + j_offsets
-                j_mask = (current_j_offsets < i) & (current_j_offsets >= 0)
-                
-                # Load L[i][j_start:j_start+BLOCK_SIZE]
-                L_row_ptr = L_ptr + i * L_stride
-                L_vals = tl.load(L_row_ptr + current_j_offsets, mask=j_mask, other=0.0)
-                
-                # Load x[j_start:j_start+BLOCK_SIZE]
-                x_vals = tl.load(x_ptr + current_j_offsets, mask=j_mask, other=0.0)
-                
-                # Compute partial sum
-                products = L_vals * x_vals
-                sum_val += tl.sum(products)
-            
-            x_i = x_i - sum_val
+        # Load L[row][j] values
+        L_ptrs = L_ptr + row_to_process * stride_L + current_cols
+        L_vals = tl.load(L_ptrs, mask=mask, other=0.0)
         
-        # Divide by diagonal element
-        L_diag = tl.load(L_ptr + i * L_stride + i)
-        x_i = x_i / L_diag
+        # Load x[j] values
+        x_ptrs = x_ptr + current_cols
+        x_vals = tl.load(x_ptrs, mask=mask, other=0.0)
         
-        # Store result
-        tl.store(x_ptr + i, x_i)
+        # Compute partial sum
+        products = L_vals * x_vals
+        partial_sum = tl.sum(products)
+        x_val = x_val - partial_sum
+    
+    # Divide by diagonal element L[row][row]
+    L_diag = tl.load(L_ptr + row_to_process * stride_L + row_to_process)
+    x_val = x_val / L_diag
+    
+    # Store result
+    tl.store(x_ptr + row_to_process, x_val)
 
 def trisolv_triton(L, b, x, N):
-    x.copy_(b)
+    BLOCK_SIZE = 64
     
-    grid = (1,)
-    trisolv_kernel[grid](
-        L.data_ptr(), b.data_ptr(), x.data_ptr(), N, L.stride(0)
-    )
+    # Process each row sequentially to maintain dependency
+    for i in range(N):
+        # Launch kernel for current row
+        grid = (1,)
+        trisolv_kernel[grid](
+            L, b, x,
+            row_to_process=i,
+            N=N,
+            stride_L=L.stride(0),
+            BLOCK_SIZE=BLOCK_SIZE
+        )
 ```
 
 
@@ -154,6 +154,14 @@ def trisolv_triton(L, b, x, N):
 ```
 
 ## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
 
 **NEVER use `tl.arange()` inside a for loop:**
 ```python

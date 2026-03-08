@@ -10,7 +10,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton_no_analysis.durbin.attempt5 import durbin_triton
+    from polybench_results.llm_triton.durbin.attempt2 import durbin_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

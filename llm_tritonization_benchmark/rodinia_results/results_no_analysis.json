@@ -1,0 +1,40 @@
+{
+  "hotspot": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 6,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=8.763885e+30 rel_error=4.174286e+07",
+      "max_error": "8.763885e+30"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 1.742785,
+      "triton_time_ms": 1.426221,
+      "speedup": 1.22196
+    },
+    "final_attempt": 6
+  },
+  "lud": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 13.38816,
+      "triton_time_ms": 0.862703,
+      "speedup": 15.518844
+    },
+    "final_attempt": 1
+  },
+  "pathfinder": {
+    "triton_generated": true,
+    "test_passed": false,
+    "attempts": 10,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=1.580874e+02 rel_error=4.036529e-01",
+      "max_error": "1.580874e+02"
+    }
+  }
+}

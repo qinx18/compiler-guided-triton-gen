@@ -1,5 +1,5 @@
 # LLM-Generated Triton Implementation for lu (Polybench)
-# Generated: 2026-03-02 03:30:05
+# Generated: 2026-03-06 06:26:59
 # Model: claude-sonnet-4-20250514
 
 ================================================================================
@@ -56,18 +56,17 @@ for (i = 0; i < N; i++) {
 ## WAR (Write-After-Read) Dependencies
 
 **Note**: This kernel has WAR (Write-After-Read) dependencies.
-If you split the computation into **separate Triton kernels** launched sequentially, kernel launch barriers handle these dependencies naturally — no cloning needed.
-Cloning is only needed if reads and writes to the same array happen **within a single kernel**.
 
 **Arrays with WAR dependencies**: A
-- Read A[(i), (k)] may conflict with Write A[(i), (j)] from different iteration
-- Read A[(k), (j)] may conflict with Write A[(i), (j)] from different iteration
 
-**If using a single kernel**: Create read-only copies before the parallel region:
+**Recommended structure**: Use `grid=(1,)` with the `i` loop **INSIDE** the kernel. This puts the entire computation in a single kernel launch, avoiding N separate kernel launch overheads.
 ```python
-A_copy = A.clone()  # Read from copy, write to original
+kernel[grid=(1,)](A, N)  # ONE kernel launch total
+# Inside kernel: for i in range(N): vectorize j
 ```
-**If using separate kernels**: No cloning needed — launch one kernel per phase.
+With `grid=(1,)` (single thread block), the sequential `i` loop is correct — there are no cross-CTA race conditions. Process BOTH phases (all `j` ranges) within the `i` loop. No cloning needed.
+
+**CRITICAL: Vectorize `j`**: Use `BLOCK_SIZE = triton.next_power_of_2(N)` and `j_offsets = tl.arange(0, BLOCK_SIZE)` to process ALL `j` values simultaneously. Do NOT use a scalar `for` loop over `j` — use **masked vector operations** instead. For inner-product loops (e.g., `for k`), load `A[i][k]` as a scalar and `A[k][j_offsets]` as a vector, then do vectorized multiply-subtract across all columns simultaneously.
 
 
 ## Parallelization Analysis
@@ -77,9 +76,8 @@ A_copy = A.clone()  # Read from copy, write to original
 
 - Parallelize `j`, sequential `i`: VALID
 
-- Parallelize `i`, sequential `j`: VALID
-
-**Both `i` and `j` are freely parallelizable.** Use a 2D grid to parallelize both simultaneously for best GPU occupancy.
+- Parallelize `i`, sequential `j`: INVALID
+  - Cross-phase dependency: different loop bodies under `i` read/write the same arrays (e.g., phase 1 writes B, phase 2 reads B)
 
 
 ## Array Information:
@@ -106,6 +104,14 @@ def lu_triton(A, N):
 ```
 
 ## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
 
 **NEVER use `tl.arange()` inside a for loop:**
 ```python
@@ -149,86 +155,53 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def lu_kernel(A_ptr, N, BLOCK_SIZE: tl.constexpr):
-    # Get program IDs
-    pid_j = tl.program_id(0)
-    pid_i = tl.program_id(1)
-    
-    # Calculate actual i and j indices
-    i = pid_i
-    j_start = pid_j * BLOCK_SIZE
-    
-    # Create offsets for j dimension
+def lu_kernel(A, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
     j_offsets = tl.arange(0, BLOCK_SIZE)
-    j_indices = j_start + j_offsets
     
-    # First loop: for j < i
-    if i > 0:
-        # Mask for valid j indices (j < i and j < N)
-        j_mask = (j_indices < i) & (j_indices < N) & (j_indices >= j_start)
-        
-        if tl.sum(j_mask.to(tl.int32)) > 0:
-            # Initialize A[i][j] values
-            A_ij_ptr = A_ptr + i * N + j_indices
-            A_ij = tl.load(A_ij_ptr, mask=j_mask, other=0.0)
+    for i in range(N):
+        # Phase 1: j < i
+        if i > 0:
+            # Process j values from 0 to i-1
+            j_mask = j_offsets < i
             
-            # Inner loop: for k < j
+            # For each valid j position
+            for j_scalar in range(i):
+                # Inner reduction: A[i][j] -= A[i][k] * A[k][j] for k in [0, j)
+                acc = 0.0
+                for k in range(j_scalar):
+                    a_ik = tl.load(A + i * N + k)
+                    a_kj = tl.load(A + k * N + j_scalar)
+                    acc += a_ik * a_kj
+                
+                # Load current A[i][j], subtract accumulation, divide by A[j][j]
+                a_ij = tl.load(A + i * N + j_scalar)
+                a_ij = a_ij - acc
+                a_jj = tl.load(A + j_scalar * N + j_scalar)
+                a_ij = a_ij / a_jj
+                tl.store(A + i * N + j_scalar, a_ij)
+        
+        # Phase 2: j >= i (vectorized)
+        j_mask = (j_offsets >= i) & (j_offsets < N)
+        valid_j_offsets = j_offsets
+        
+        if i > 0:
+            # Load A[i][j] for all valid j positions
+            a_ij_ptrs = A + i * N + valid_j_offsets
+            a_ij = tl.load(a_ij_ptrs, mask=j_mask, other=0.0)
+            
+            # Inner reduction: A[i][j] -= A[i][k] * A[k][j] for k in [0, i)
             for k in range(i):
-                k_mask = j_mask & (k < j_indices)
-                if tl.sum(k_mask.to(tl.int32)) > 0:
-                    # Load A[i][k]
-                    A_ik = tl.load(A_ptr + i * N + k)
-                    # Load A[k][j]
-                    A_kj_ptr = A_ptr + k * N + j_indices
-                    A_kj = tl.load(A_kj_ptr, mask=k_mask, other=0.0)
-                    # Update A[i][j] -= A[i][k] * A[k][j]
-                    A_ij = tl.where(k_mask, A_ij - A_ik * A_kj, A_ij)
+                a_ik = tl.load(A + i * N + k)  # scalar
+                a_kj_ptrs = A + k * N + valid_j_offsets
+                a_kj = tl.load(a_kj_ptrs, mask=j_mask, other=0.0)  # vector
+                a_ij = a_ij - a_ik * a_kj
             
-            # Divide by diagonal elements A[j][j]
-            for j_idx in range(BLOCK_SIZE):
-                j_actual = j_start + j_idx
-                if j_actual < i and j_actual < N:
-                    # Load diagonal element A[j][j]
-                    A_jj = tl.load(A_ptr + j_actual * N + j_actual)
-                    # Update single element
-                    single_mask = j_indices == j_actual
-                    A_ij = tl.where(single_mask, A_ij / A_jj, A_ij)
-            
-            # Store results
-            tl.store(A_ij_ptr, A_ij, mask=j_mask)
-    
-    # Second loop: for j >= i
-    j_mask2 = (j_indices >= i) & (j_indices < N)
-    
-    if tl.sum(j_mask2.to(tl.int32)) > 0:
-        # Initialize A[i][j] values
-        A_ij_ptr2 = A_ptr + i * N + j_indices
-        A_ij2 = tl.load(A_ij_ptr2, mask=j_mask2, other=0.0)
-        
-        # Inner loop: for k < i
-        for k in range(i):
-            # Load A[i][k]
-            A_ik = tl.load(A_ptr + i * N + k)
-            # Load A[k][j]
-            A_kj_ptr = A_ptr + k * N + j_indices
-            A_kj = tl.load(A_kj_ptr, mask=j_mask2, other=0.0)
-            # Update A[i][j] -= A[i][k] * A[k][j]
-            A_ij2 = A_ij2 - A_ik * A_kj
-        
-        # Store results
-        tl.store(A_ij_ptr2, A_ij2, mask=j_mask2)
+            # Store updated A[i][j]
+            tl.store(a_ij_ptrs, a_ij, mask=j_mask)
 
 def lu_triton(A, N):
-    BLOCK_SIZE = 32
+    BLOCK_SIZE = triton.next_power_of_2(N)
     
-    # Launch kernel for each row i sequentially to handle dependencies
-    for i in range(N):
-        grid_j = triton.cdiv(N, BLOCK_SIZE)
-        grid = (grid_j, 1)
-        
-        lu_kernel[grid](
-            A,
-            N,
-            BLOCK_SIZE=BLOCK_SIZE
-        )
+    grid = (1,)
+    lu_kernel[grid](A, N, BLOCK_SIZE)
 ```

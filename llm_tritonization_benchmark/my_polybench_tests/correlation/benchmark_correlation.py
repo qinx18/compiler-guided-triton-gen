@@ -10,7 +10,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton.correlation.attempt2 import correlation_triton
+    from polybench_results.llm_triton.correlation.attempt1 import correlation_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

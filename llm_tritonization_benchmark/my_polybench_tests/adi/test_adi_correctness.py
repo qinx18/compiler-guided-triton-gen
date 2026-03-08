@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for adi (Polybench) - attempt 9"""
+"""Correctness test for adi (Polybench) - attempt 1"""
 import sys
 import ctypes
 import numpy as np
@@ -10,7 +10,7 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.adi.attempt9 import adi_triton
+    from polybench_results.llm_triton.adi.attempt1 import adi_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

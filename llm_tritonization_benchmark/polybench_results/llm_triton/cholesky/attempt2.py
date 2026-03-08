@@ -3,45 +3,70 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def cholesky_kernel(A_ptr, N, i, BLOCK_SIZE: tl.constexpr):
-    # Process j < i
+def cholesky_kernel(A_ptr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    row = tl.program_id(0)
+    
+    if row >= N:
+        return
+    
+    i = row
+    
+    # j < i case
     for j in range(i):
-        # Compute A[i][j] -= A[i][k] * A[j][k] for k < j
-        for k in range(j):
-            i_k_idx = i * N + k
-            j_k_idx = j * N + k
-            a_i_k = tl.load(A_ptr + i_k_idx)
-            a_j_k = tl.load(A_ptr + j_k_idx)
+        # Inner k loop: A[i][j] -= A[i][k] * A[j][k]
+        col_offsets = tl.arange(0, BLOCK_SIZE)
+        
+        for k_start in range(0, j, BLOCK_SIZE):
+            k_offsets = k_start + col_offsets
+            k_mask = k_offsets < j
             
-            i_j_idx = i * N + j
-            a_i_j = tl.load(A_ptr + i_j_idx)
-            a_i_j -= a_i_k * a_j_k
-            tl.store(A_ptr + i_j_idx, a_i_j)
+            i_k_offsets = i * N + k_offsets
+            j_k_offsets = j * N + k_offsets
+            
+            a_i_k = tl.load(A_ptr + i_k_offsets, mask=k_mask, other=0.0)
+            a_j_k = tl.load(A_ptr + j_k_offsets, mask=k_mask, other=0.0)
+            
+            i_j_offset = i * N + j
+            a_i_j = tl.load(A_ptr + i_j_offset)
+            
+            reduction = tl.sum(a_i_k * a_j_k)
+            a_i_j = a_i_j - reduction
+            tl.store(A_ptr + i_j_offset, a_i_j)
         
         # A[i][j] /= A[j][j]
-        i_j_idx = i * N + j
-        j_j_idx = j * N + j
-        a_i_j = tl.load(A_ptr + i_j_idx)
-        a_j_j = tl.load(A_ptr + j_j_idx)
-        a_i_j /= a_j_j
-        tl.store(A_ptr + i_j_idx, a_i_j)
+        i_j_offset = i * N + j
+        j_j_offset = j * N + j
+        
+        a_i_j = tl.load(A_ptr + i_j_offset)
+        a_j_j = tl.load(A_ptr + j_j_offset)
+        
+        a_i_j = a_i_j / a_j_j
+        tl.store(A_ptr + i_j_offset, a_i_j)
     
-    # Process diagonal case (i == j)
-    i_i_idx = i * N + i
-    a_i_i = tl.load(A_ptr + i_i_idx)
+    # i == j case: A[i][i] -= A[i][k] * A[i][k]
+    col_offsets = tl.arange(0, BLOCK_SIZE)
     
-    for k in range(i):
-        i_k_idx = i * N + k
-        a_i_k = tl.load(A_ptr + i_k_idx)
-        a_i_i -= a_i_k * a_i_k
+    for k_start in range(0, i, BLOCK_SIZE):
+        k_offsets = k_start + col_offsets
+        k_mask = k_offsets < i
+        
+        i_k_offsets = i * N + k_offsets
+        a_i_k = tl.load(A_ptr + i_k_offsets, mask=k_mask, other=0.0)
+        
+        i_i_offset = i * N + i
+        a_i_i = tl.load(A_ptr + i_i_offset)
+        
+        reduction = tl.sum(a_i_k * a_i_k)
+        a_i_i = a_i_i - reduction
+        tl.store(A_ptr + i_i_offset, a_i_i)
     
+    # A[i][i] = sqrt(A[i][i])
+    i_i_offset = i * N + i
+    a_i_i = tl.load(A_ptr + i_i_offset)
     a_i_i = tl.sqrt(a_i_i)
-    tl.store(A_ptr + i_i_idx, a_i_i)
+    tl.store(A_ptr + i_i_offset, a_i_i)
 
 def cholesky_triton(A, N):
-    # Launch kernel for each i value sequentially
-    for i in range(N):
-        grid = (1,)
-        cholesky_kernel[grid](
-            A, N, i, BLOCK_SIZE=32
-        )
+    BLOCK_SIZE = 32
+    grid = (N,)
+    cholesky_kernel[grid](A, N, BLOCK_SIZE)

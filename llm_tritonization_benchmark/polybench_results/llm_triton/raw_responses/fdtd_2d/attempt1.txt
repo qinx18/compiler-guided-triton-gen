@@ -1,5 +1,5 @@
 # LLM-Generated Triton Implementation for fdtd_2d (Polybench)
-# Generated: 2026-03-02 03:19:58
+# Generated: 2026-03-06 06:21:27
 # Model: claude-sonnet-4-20250514
 
 ================================================================================
@@ -64,15 +64,31 @@ for(t = 0; t < TMAX; t++)
 
 ## Parallelization Analysis
 
-**Loop dimensions**: ['t', 'j']
+**Loop dimensions**: ['t', 'j', 'i']
 
-- Parallelize `t`, sequential `j`: VALID
-  - Data dependencies detected - verify t is safe to parallelize
+- Parallelize `t`, sequential `j`: INVALID
+  - `t` is a sequential context loop (e.g. timestep) — must remain sequential
 
 - Parallelize `j`, sequential `t`: VALID
-  - Data dependencies detected - verify j is safe to parallelize
 
-**Both `t` and `j` are freely parallelizable.** Use a 2D grid to parallelize both simultaneously for best GPU occupancy.
+- Parallelize `i`, sequential `t`: VALID
+
+**Both `j` and `i` are freely parallelizable.** Use a 2D grid to parallelize both simultaneously for best GPU occupancy.
+
+**CRITICAL: Timestep/phase structure**: Use `grid=(1,)` with the `t` loop **INSIDE** the kernel. This puts everything in a single kernel launch, avoiding kernel launch overhead entirely.
+```python
+kernel[grid=(1,)](...)  # ONE kernel launch — t loop inside
+```
+With `grid=(1,)` (single thread block), the `t` loop inside the kernel is correct — there are no cross-CTA race conditions because there is only one CTA. All phases execute sequentially within each timestep, and the `t` loop iterates normally.
+
+**Inside the kernel**: Use 2D tiling to process all elements:
+```python
+for t in range(TSTEPS):
+    for row_start in range(0, N_ROWS, BLOCK_ROW):
+        for col_start in range(0, N_COLS, BLOCK_COL):
+            # vectorize within each tile
+```
+Process all phases for each timestep sequentially within the kernel. Vectorize the column dimension with `tl.arange(0, BLOCK_COL)`.
 
 
 ## Array Information:
@@ -104,6 +120,14 @@ def fdtd_2d_triton(_fict_, ex, ey, hz, NX, NY, TMAX):
 ```
 
 ## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
 
 **NEVER use `tl.arange()` inside a for loop:**
 ```python
@@ -147,119 +171,114 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def fdtd_2d_kernel(fict_ptr, ex_ptr, ey_ptr, hz_ptr, NX, NY, TMAX, 
-                   fict_stride0, ex_stride0, ex_stride1, ey_stride0, ey_stride1,
-                   hz_stride0, hz_stride1, BLOCK_T: tl.constexpr, BLOCK_J: tl.constexpr):
+def fdtd_2d_kernel(_fict_ptr, ex_ptr, ey_ptr, hz_ptr, 
+                   NX: tl.constexpr, NY: tl.constexpr, TMAX: tl.constexpr,
+                   BLOCK_ROW: tl.constexpr, BLOCK_COL: tl.constexpr):
     
-    # Get program IDs
-    pid_t = tl.program_id(axis=0)
-    pid_j = tl.program_id(axis=1)
+    # Define offsets once at the start
+    row_offsets = tl.arange(0, BLOCK_ROW)
+    col_offsets = tl.arange(0, BLOCK_COL)
     
-    # Compute block ranges
-    t_start = pid_t * BLOCK_T
-    j_start = pid_j * BLOCK_J
-    
-    # Create offset arrays
-    t_offsets = tl.arange(0, BLOCK_T)
-    j_offsets = tl.arange(0, BLOCK_J)
-    
-    # Time loop - sequential within each block
-    for t_block in range(0, TMAX, BLOCK_T):
-        t_current = t_block + t_offsets
-        t_mask = t_current < TMAX
+    for t in range(TMAX):
+        # Load _fict_[t]
+        fict_val = tl.load(_fict_ptr + t)
         
-        # Only process valid time steps
-        for t_local in range(BLOCK_T):
-            t_idx = t_block + t_local
-            if t_idx >= TMAX:
-                break
+        # Phase 1: for (j = 0; j < NY; j++) ey[0][j] = _fict_[t];
+        for col_start in range(0, NY, BLOCK_COL):
+            current_col_offsets = col_start + col_offsets
+            col_mask = current_col_offsets < NY
             
-            # Step 1: Set boundary condition ey[0][j] = _fict_[t]
-            j_current = j_start + j_offsets
-            j_mask = j_current < NY
-            
-            if t_idx == t_block + t_local:  # Current time step
-                fict_val = tl.load(fict_ptr + t_idx * fict_stride0)
+            # ey[0][j] = _fict_[t]
+            ey_indices = 0 * NY + current_col_offsets
+            valid_mask = col_mask
+            tl.store(ey_ptr + ey_indices, fict_val, mask=valid_mask)
+        
+        # Phase 2: for (i = 1; i < NX; i++) for (j = 0; j < NY; j++)
+        #          ey[i][j] = ey[i][j] - 0.5*(hz[i][j]-hz[i-1][j]);
+        for row_start in range(1, NX, BLOCK_ROW):
+            for col_start in range(0, NY, BLOCK_COL):
+                current_row_offsets = row_start + row_offsets
+                current_col_offsets = col_start + col_offsets
                 
-                # Set ey[0][j] for all valid j in this block
-                valid_j_mask = (j_current < NY) & (j_start + j_offsets < NY)
-                if valid_j_mask.any():
-                    ey_boundary_ptrs = ey_ptr + 0 * ey_stride0 + j_current * ey_stride1
-                    tl.store(ey_boundary_ptrs, fict_val, mask=valid_j_mask)
-            
-            # Step 2: Update ey[i][j] for i = 1 to NX-1
-            for i in range(1, NX):
-                j_current = j_start + j_offsets
-                j_mask = j_current < NY
+                row_mask = current_row_offsets < NX
+                col_mask = current_col_offsets < NY
+                valid_mask = row_mask[:, None] & col_mask[None, :]
                 
-                if j_mask.any():
-                    ey_ptrs = ey_ptr + i * ey_stride0 + j_current * ey_stride1
-                    hz_ptrs = hz_ptr + i * hz_stride0 + j_current * hz_stride1
-                    hz_prev_ptrs = hz_ptr + (i-1) * hz_stride0 + j_current * hz_stride1
-                    
-                    ey_vals = tl.load(ey_ptrs, mask=j_mask)
-                    hz_vals = tl.load(hz_ptrs, mask=j_mask)
-                    hz_prev_vals = tl.load(hz_prev_ptrs, mask=j_mask)
-                    
-                    new_ey = ey_vals - 0.5 * (hz_vals - hz_prev_vals)
-                    tl.store(ey_ptrs, new_ey, mask=j_mask)
-            
-            # Step 3: Update ex[i][j] for j = 1 to NY-1
-            for i in range(NX):
-                for j_block_start in range(1, NY, BLOCK_J):
-                    j_current = j_block_start + j_offsets
-                    j_mask = (j_current < NY) & (j_current >= 1)
-                    
-                    if j_mask.any():
-                        ex_ptrs = ex_ptr + i * ex_stride0 + j_current * ex_stride1
-                        hz_ptrs = hz_ptr + i * hz_stride0 + j_current * hz_stride1
-                        hz_prev_ptrs = hz_ptr + i * hz_stride0 + (j_current-1) * hz_stride1
-                        
-                        ex_vals = tl.load(ex_ptrs, mask=j_mask)
-                        hz_vals = tl.load(hz_ptrs, mask=j_mask)
-                        hz_prev_vals = tl.load(hz_prev_ptrs, mask=j_mask)
-                        
-                        new_ex = ex_vals - 0.5 * (hz_vals - hz_prev_vals)
-                        tl.store(ex_ptrs, new_ex, mask=j_mask)
-            
-            # Step 4: Update hz[i][j] for i = 0 to NX-2, j = 0 to NY-2
-            for i in range(NX - 1):
-                for j_block_start in range(0, NY - 1, BLOCK_J):
-                    j_current = j_block_start + j_offsets
-                    j_mask = (j_current < (NY - 1)) & (j_current >= 0)
-                    
-                    if j_mask.any():
-                        hz_ptrs = hz_ptr + i * hz_stride0 + j_current * hz_stride1
-                        ex_ptrs = ex_ptr + i * ex_stride0 + j_current * ex_stride1
-                        ex_next_ptrs = ex_ptr + i * ex_stride0 + (j_current + 1) * ex_stride1
-                        ey_ptrs = ey_ptr + i * ey_stride0 + j_current * ey_stride1
-                        ey_next_ptrs = ey_ptr + (i + 1) * ey_stride0 + j_current * ey_stride1
-                        
-                        hz_vals = tl.load(hz_ptrs, mask=j_mask)
-                        ex_vals = tl.load(ex_ptrs, mask=j_mask)
-                        ex_next_vals = tl.load(ex_next_ptrs, mask=j_mask)
-                        ey_vals = tl.load(ey_ptrs, mask=j_mask)
-                        ey_next_vals = tl.load(ey_next_ptrs, mask=j_mask)
-                        
-                        new_hz = hz_vals - 0.7 * ((ex_next_vals - ex_vals) + (ey_next_vals - ey_vals))
-                        tl.store(hz_ptrs, new_hz, mask=j_mask)
+                # Calculate indices
+                ey_indices = current_row_offsets[:, None] * NY + current_col_offsets[None, :]
+                hz_indices = current_row_offsets[:, None] * NY + current_col_offsets[None, :]
+                hz_prev_indices = (current_row_offsets[:, None] - 1) * NY + current_col_offsets[None, :]
+                
+                # Load values
+                ey_vals = tl.load(ey_ptr + ey_indices, mask=valid_mask)
+                hz_vals = tl.load(hz_ptr + hz_indices, mask=valid_mask)
+                hz_prev_vals = tl.load(hz_ptr + hz_prev_indices, mask=valid_mask)
+                
+                # Compute and store
+                new_ey = ey_vals - 0.5 * (hz_vals - hz_prev_vals)
+                tl.store(ey_ptr + ey_indices, new_ey, mask=valid_mask)
+        
+        # Phase 3: for (i = 0; i < NX; i++) for (j = 1; j < NY; j++)
+        #          ex[i][j] = ex[i][j] - 0.5*(hz[i][j]-hz[i][j-1]);
+        for row_start in range(0, NX, BLOCK_ROW):
+            for col_start in range(1, NY, BLOCK_COL):
+                current_row_offsets = row_start + row_offsets
+                current_col_offsets = col_start + col_offsets
+                
+                row_mask = current_row_offsets < NX
+                col_mask = current_col_offsets < NY
+                valid_mask = row_mask[:, None] & col_mask[None, :]
+                
+                # Calculate indices
+                ex_indices = current_row_offsets[:, None] * NY + current_col_offsets[None, :]
+                hz_indices = current_row_offsets[:, None] * NY + current_col_offsets[None, :]
+                hz_prev_indices = current_row_offsets[:, None] * NY + (current_col_offsets[None, :] - 1)
+                
+                # Load values
+                ex_vals = tl.load(ex_ptr + ex_indices, mask=valid_mask)
+                hz_vals = tl.load(hz_ptr + hz_indices, mask=valid_mask)
+                hz_prev_vals = tl.load(hz_ptr + hz_prev_indices, mask=valid_mask)
+                
+                # Compute and store
+                new_ex = ex_vals - 0.5 * (hz_vals - hz_prev_vals)
+                tl.store(ex_ptr + ex_indices, new_ex, mask=valid_mask)
+        
+        # Phase 4: for (i = 0; i < NX - 1; i++) for (j = 0; j < NY - 1; j++)
+        #          hz[i][j] = hz[i][j] - 0.7*(ex[i][j+1] - ex[i][j] + ey[i+1][j] - ey[i][j]);
+        for row_start in range(0, NX - 1, BLOCK_ROW):
+            for col_start in range(0, NY - 1, BLOCK_COL):
+                current_row_offsets = row_start + row_offsets
+                current_col_offsets = col_start + col_offsets
+                
+                row_mask = current_row_offsets < (NX - 1)
+                col_mask = current_col_offsets < (NY - 1)
+                valid_mask = row_mask[:, None] & col_mask[None, :]
+                
+                # Calculate indices
+                hz_indices = current_row_offsets[:, None] * NY + current_col_offsets[None, :]
+                ex_indices = current_row_offsets[:, None] * NY + current_col_offsets[None, :]
+                ex_next_indices = current_row_offsets[:, None] * NY + (current_col_offsets[None, :] + 1)
+                ey_indices = current_row_offsets[:, None] * NY + current_col_offsets[None, :]
+                ey_next_indices = (current_row_offsets[:, None] + 1) * NY + current_col_offsets[None, :]
+                
+                # Load values
+                hz_vals = tl.load(hz_ptr + hz_indices, mask=valid_mask)
+                ex_vals = tl.load(ex_ptr + ex_indices, mask=valid_mask)
+                ex_next_vals = tl.load(ex_ptr + ex_next_indices, mask=valid_mask)
+                ey_vals = tl.load(ey_ptr + ey_indices, mask=valid_mask)
+                ey_next_vals = tl.load(ey_ptr + ey_next_indices, mask=valid_mask)
+                
+                # Compute and store
+                new_hz = hz_vals - 0.7 * (ex_next_vals - ex_vals + ey_next_vals - ey_vals)
+                tl.store(hz_ptr + hz_indices, new_hz, mask=valid_mask)
 
 def fdtd_2d_triton(_fict_, ex, ey, hz, NX, NY, TMAX):
-    # Block sizes
-    BLOCK_T = 4
-    BLOCK_J = 32
+    BLOCK_ROW = 16
+    BLOCK_COL = 16
     
-    # Grid dimensions
-    grid_t = triton.cdiv(TMAX, BLOCK_T)
-    grid_j = triton.cdiv(NY, BLOCK_J)
-    
-    # Launch kernel - using single work item since we need sequential processing
-    fdtd_2d_kernel[(1, 1)](
-        _fict_, ex, ey, hz, NX, NY, TMAX,
-        _fict_.stride(0),
-        ex.stride(0), ex.stride(1),
-        ey.stride(0), ey.stride(1),
-        hz.stride(0), hz.stride(1),
-        BLOCK_T=BLOCK_T, BLOCK_J=BLOCK_J
+    fdtd_2d_kernel[(1,)](
+        _fict_, ex, ey, hz,
+        NX=NX, NY=NY, TMAX=TMAX,
+        BLOCK_ROW=BLOCK_ROW, BLOCK_COL=BLOCK_COL
     )
 ```

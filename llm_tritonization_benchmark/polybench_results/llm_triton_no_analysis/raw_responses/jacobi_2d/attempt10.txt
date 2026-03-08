@@ -4,7 +4,7 @@
 Your last attempt produced incorrect numerical results.
 
 **Error type**: Numerical error (values don't match)
-**Max error observed**: 1.121067e+00
+**Max error observed**: 1.576938e+00
 
 Please fix the numerical computation. Common causes:
 - Incorrect loop bounds or indices
@@ -20,70 +20,75 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def jacobi_2d_kernel(A_ptr, B_ptr, N, TSTEPS, BLOCK_SIZE: tl.constexpr):
-    # Get program ID for 2D grid
-    pid_i = tl.program_id(0)
-    pid_j = tl.program_id(1)
+def jacobi_2d_kernel(A_ptr, B_ptr, N: tl.constexpr, TSTEPS: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
     
-    # Calculate block starts
-    block_start_i = pid_i * BLOCK_SIZE
-    block_start_j = pid_j * BLOCK_SIZE
+    # Calculate total number of inner elements
+    inner_size = (N - 2) * (N - 2)
     
-    # Create offset arrays once
+    # Calculate starting position for this block
+    block_start = pid * BLOCK_SIZE
+    
+    # Create offsets for this block
     offsets = tl.arange(0, BLOCK_SIZE)
+    current_offsets = block_start + offsets
+    mask = current_offsets < inner_size
     
-    # Time stepping loop
     for t in range(TSTEPS):
-        # Calculate current indices
-        i_indices = block_start_i + offsets
-        j_indices = block_start_j + offsets
+        # Synchronization barrier between phases
+        tl.debug_barrier()
         
-        # Create masks for valid interior points
-        mask_i = (i_indices >= 1) & (i_indices < N - 1)
-        mask_j = (j_indices >= 1) & (j_indices < N - 1)
+        # Convert linear index to 2D coordinates in inner region
+        valid_idx = tl.where(mask, current_offsets, 0)
+        inner_i = valid_idx // (N - 2)
+        inner_j = valid_idx % (N - 2)
         
-        # Expand for 2D indexing
-        i_expanded = i_indices[:, None]
-        j_expanded = j_indices[None, :]
-        mask_2d = mask_i[:, None] & mask_j[None, :]
+        # Convert to actual array coordinates (add 1 for boundary offset)
+        i = inner_i + 1
+        j = inner_j + 1
         
-        # Calculate memory indices for all combinations
-        center_idx = i_expanded * N + j_expanded
-        left_idx = i_expanded * N + (j_expanded - 1)
-        right_idx = i_expanded * N + (j_expanded + 1)
-        up_idx = (i_expanded - 1) * N + j_expanded
-        down_idx = (i_expanded + 1) * N + j_expanded
+        # Calculate memory offsets for 5-point stencil
+        center_off = i * N + j
+        left_off = i * N + (j - 1)
+        right_off = i * N + (j + 1)
+        up_off = (i - 1) * N + j
+        down_off = (i + 1) * N + j
         
-        # First update: A -> B
-        a_center = tl.load(A_ptr + center_idx, mask=mask_2d, other=0.0)
-        a_left = tl.load(A_ptr + left_idx, mask=mask_2d, other=0.0)
-        a_right = tl.load(A_ptr + right_idx, mask=mask_2d, other=0.0)
-        a_up = tl.load(A_ptr + up_idx, mask=mask_2d, other=0.0)
-        a_down = tl.load(A_ptr + down_idx, mask=mask_2d, other=0.0)
+        # First phase: update B from A
+        a_center = tl.load(A_ptr + center_off, mask=mask, other=0.0)
+        a_left = tl.load(A_ptr + left_off, mask=mask, other=0.0)
+        a_right = tl.load(A_ptr + right_off, mask=mask, other=0.0)
+        a_up = tl.load(A_ptr + up_off, mask=mask, other=0.0)
+        a_down = tl.load(A_ptr + down_off, mask=mask, other=0.0)
         
         b_new = 0.2 * (a_center + a_left + a_right + a_up + a_down)
+        tl.store(B_ptr + center_off, b_new, mask=mask)
         
-        tl.store(B_ptr + center_idx, b_new, mask=mask_2d)
+        # Synchronization barrier between phases
+        tl.debug_barrier()
         
-        # Second update: B -> A
-        b_center = tl.load(B_ptr + center_idx, mask=mask_2d, other=0.0)
-        b_left = tl.load(B_ptr + left_idx, mask=mask_2d, other=0.0)
-        b_right = tl.load(B_ptr + right_idx, mask=mask_2d, other=0.0)
-        b_up = tl.load(B_ptr + up_idx, mask=mask_2d, other=0.0)
-        b_down = tl.load(B_ptr + down_idx, mask=mask_2d, other=0.0)
+        # Second phase: update A from B
+        b_center = tl.load(B_ptr + center_off, mask=mask, other=0.0)
+        b_left = tl.load(B_ptr + left_off, mask=mask, other=0.0)
+        b_right = tl.load(B_ptr + right_off, mask=mask, other=0.0)
+        b_up = tl.load(B_ptr + up_off, mask=mask, other=0.0)
+        b_down = tl.load(B_ptr + down_off, mask=mask, other=0.0)
         
         a_new = 0.2 * (b_center + b_left + b_right + b_up + b_down)
-        
-        tl.store(A_ptr + center_idx, a_new, mask=mask_2d)
+        tl.store(A_ptr + center_off, a_new, mask=mask)
 
 def jacobi_2d_triton(A, B, N, TSTEPS):
-    BLOCK_SIZE = 16
+    # Calculate number of inner elements to process
+    inner_size = (N - 2) * (N - 2)
     
-    # Calculate grid size for interior points
-    grid_size = triton.cdiv(N - 2, BLOCK_SIZE)
+    # Block size for computation
+    BLOCK_SIZE = 64
     
-    # Launch kernel with 2D grid
-    jacobi_2d_kernel[(grid_size, grid_size)](
+    # Calculate number of blocks needed
+    num_blocks = triton.cdiv(inner_size, BLOCK_SIZE)
+    
+    # Launch the kernel
+    jacobi_2d_kernel[(num_blocks,)](
         A, B, N, TSTEPS, BLOCK_SIZE
     )
 ```
@@ -159,6 +164,14 @@ def jacobi_2d_triton(A, B, N, TSTEPS):
 ```
 
 ## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
 
 **NEVER use `tl.arange()` inside a for loop:**
 ```python

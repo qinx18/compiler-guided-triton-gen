@@ -3,59 +3,46 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def trisolv_kernel(L, b, x, N, L_stride):
-    i = tl.program_id(0)
+def trisolv_kernel(L_ptr, b_ptr, x_ptr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    i = pid
     
     if i >= N:
         return
     
     # x[i] = b[i]
-    b_ptr = b + i
-    x_ptr = x + i
-    b_val = tl.load(b_ptr)
-    tl.store(x_ptr, b_val)
+    x_i = tl.load(b_ptr + i)
     
-    # Load current x[i] value
-    x_val = b_val
-    
-    # for (j = 0; j < i; j++)
-    #   x[i] -= L[i][j] * x[j];
-    if i > 0:
-        BLOCK_SIZE = 32
-        j_offsets = tl.arange(0, BLOCK_SIZE)
+    # Vectorized processing of j from 0 to i-1 in blocks
+    for j_start in range(0, i, BLOCK_SIZE):
+        j_offsets = j_start + tl.arange(0, BLOCK_SIZE)
+        mask = j_offsets < i
         
-        for j_start in range(0, i, BLOCK_SIZE):
-            j_end = min(j_start + BLOCK_SIZE, i)
-            actual_block_size = j_end - j_start
-            
-            if actual_block_size > 0:
-                j_indices = j_start + j_offsets
-                mask = j_offsets < actual_block_size
-                
-                # Load L[i][j] values
-                L_ptrs = L + i * L_stride + j_indices
-                L_vals = tl.load(L_ptrs, mask=mask)
-                
-                # Load x[j] values
-                x_ptrs = x + j_indices
-                x_vals = tl.load(x_ptrs, mask=mask)
-                
-                # Compute products and sum
-                products = L_vals * x_vals
-                sum_val = tl.sum(products, axis=0)
-                x_val = x_val - sum_val
+        # Load L[i][j] values
+        L_indices = i * N + j_offsets
+        L_vals = tl.load(L_ptr + L_indices, mask=mask, other=0.0)
+        
+        # Load x[j] values
+        x_vals = tl.load(x_ptr + j_offsets, mask=mask, other=0.0)
+        
+        # Compute products and sum
+        products = L_vals * x_vals
+        x_i = x_i - tl.sum(products)
     
-    # x[i] = x[i] / L[i][i];
-    L_diag_ptr = L + i * L_stride + i
-    L_diag = tl.load(L_diag_ptr)
-    x_val = x_val / L_diag
+    # x[i] = x[i] / L[i][i]
+    L_ii = tl.load(L_ptr + i * N + i)
+    x_i = x_i / L_ii
     
-    # Store final result
-    tl.store(x_ptr, x_val)
+    tl.store(x_ptr + i, x_i)
 
 def trisolv_triton(L, b, x, N):
-    L_stride = L.shape[1]
+    x.copy_(b)
     
-    # Launch kernel with one thread per row
+    BLOCK_SIZE = 32
     grid = (N,)
-    trisolv_kernel[grid](L, b, x, N, L_stride)
+    
+    for i in range(N):
+        trisolv_kernel[grid](
+            L, b, x, N, BLOCK_SIZE,
+            num_warps=1
+        )

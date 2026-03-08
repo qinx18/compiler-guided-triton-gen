@@ -1,17 +1,59 @@
 
-## PREVIOUS ATTEMPT FAILED - NUMERICAL ERROR
+## PREVIOUS ATTEMPT FAILED
 
-Your last attempt produced incorrect numerical results.
+**Error type**: unknown
+**Error message**:
+```
+  Test 1: ERROR - at 18:16:
 
-**Error type**: Numerical error (values don't match)
-**Max error observed**: 1.339541e+00
+    i_offsets = i_start + tl.arange(0, BLOCK_SIZE)
+    j_offsets = j_start + tl.arange(0, BLOCK_SIZE)
 
-Please fix the numerical computation. Common causes:
-- Incorrect loop bounds or indices
-- Wrong array access patterns (row-major vs column-major)
-- Missing or incorrect operations
-- Off-by-one errors
-- Cloning input arrays instead of modifying them in-place (the test checks the original tensors)
+    i_mask = i_offsets < (N - 1)
+    j_mask = j_offsets < (N - 1)
+
+    for t in range(TSTEPS):
+        for i_idx in range(BLOCK_SIZE):
+            i = i_start + i_idx
+            if i >= (N - 1):
+                break
+                ^
+unsupported AST node type: Break
+  Test 2: ERROR - at 18:16:
+
+    i_offsets = i_start + tl.arange(0, BLOCK_SIZE)
+    j_offsets = j_start + tl.arange(0, BLOCK_SIZE)
+
+    i_mask = i_offsets < (N - 1)
+    j_mask = j_offsets < (N - 1)
+
+    for t in range(TSTEPS):
+        for i_idx in range(BLOCK_SIZE):
+            i = i_start + i_idx
+            if i >= (N - 1):
+                break
+                ^
+unsupported AST node type: Break
+  Test 3: ERROR - at 18:16:
+
+    i_offsets = i_start + tl.arange(0, BLOCK_SIZE)
+    j_offsets = j_start + tl.arange(0, BLOCK_SIZE)
+
+    i_mask = i_offsets < (N - 1)
+    j_mask = j_offsets < (N - 1)
+
+    for t in range(TSTEPS):
+        for i_idx in range(BLOCK_SIZE):
+            i = i_start + i_idx
+            if i >= (N - 1):
+                break
+                ^
+unsupported AST node type: Break
+Some tests FAILED!
+
+```
+
+Please fix the error.
 
 ## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
 ```python
@@ -20,69 +62,55 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def seidel_2d_kernel(A_ptr, N, TSTEPS, BLOCK_SIZE: tl.constexpr):
-    # Get program ID for this block
-    pid = tl.program_id(axis=0)
+def seidel_2d_kernel(A_ptr, N: tl.constexpr, TSTEPS: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    pid_i = tl.program_id(0)
+    pid_j = tl.program_id(1)
     
-    # Calculate how many elements we process per block
-    elements_per_block = BLOCK_SIZE * BLOCK_SIZE
-    total_elements = (N - 2) * (N - 2)
+    i_start = pid_i * BLOCK_SIZE + 1
+    j_start = pid_j * BLOCK_SIZE + 1
     
-    # Calculate starting element for this block
-    block_start = pid * elements_per_block
+    i_offsets = i_start + tl.arange(0, BLOCK_SIZE)
+    j_offsets = j_start + tl.arange(0, BLOCK_SIZE)
     
-    # Create offsets for the block
-    offsets = tl.arange(0, BLOCK_SIZE)[:, None] * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)[None, :]
-    flat_offsets = tl.reshape(offsets, (BLOCK_SIZE * BLOCK_SIZE,))
-    element_ids = block_start + flat_offsets
+    i_mask = i_offsets < (N - 1)
+    j_mask = j_offsets < (N - 1)
     
-    # Convert flat indices to i, j coordinates (1-based for the valid range)
-    valid_range_width = N - 2
-    i_coords = element_ids // valid_range_width + 1
-    j_coords = element_ids % valid_range_width + 1
-    
-    # Create mask for valid elements
-    mask = element_ids < total_elements
-    
-    # Time stepping loop
     for t in range(TSTEPS):
-        # Load the 9-point stencil values
-        idx_center = i_coords * N + j_coords
-        
-        # Load all 9 stencil points
-        val_center = tl.load(A_ptr + idx_center, mask=mask)
-        
-        val_top_left = tl.load(A_ptr + (i_coords - 1) * N + (j_coords - 1), mask=mask)
-        val_top = tl.load(A_ptr + (i_coords - 1) * N + j_coords, mask=mask)
-        val_top_right = tl.load(A_ptr + (i_coords - 1) * N + (j_coords + 1), mask=mask)
-        
-        val_left = tl.load(A_ptr + i_coords * N + (j_coords - 1), mask=mask)
-        val_right = tl.load(A_ptr + i_coords * N + (j_coords + 1), mask=mask)
-        
-        val_bottom_left = tl.load(A_ptr + (i_coords + 1) * N + (j_coords - 1), mask=mask)
-        val_bottom = tl.load(A_ptr + (i_coords + 1) * N + j_coords, mask=mask)
-        val_bottom_right = tl.load(A_ptr + (i_coords + 1) * N + (j_coords + 1), mask=mask)
-        
-        # Compute the average
-        new_val = (val_top_left + val_top + val_top_right +
-                   val_left + val_center + val_right +
-                   val_bottom_left + val_bottom + val_bottom_right) / 9.0
-        
-        # Store the result
-        tl.store(A_ptr + idx_center, new_val, mask=mask)
+        for i_idx in range(BLOCK_SIZE):
+            i = i_start + i_idx
+            if i >= (N - 1):
+                break
+            
+            j_indices = j_start + tl.arange(0, BLOCK_SIZE)
+            mask = j_mask
+            
+            # Load 9-point stencil values
+            addr_base = (i-1) * N + j_indices
+            val1 = tl.load(A_ptr + addr_base - 1, mask=mask, other=0.0)
+            val2 = tl.load(A_ptr + addr_base, mask=mask, other=0.0)
+            val3 = tl.load(A_ptr + addr_base + 1, mask=mask, other=0.0)
+            
+            addr_base = i * N + j_indices
+            val4 = tl.load(A_ptr + addr_base - 1, mask=mask, other=0.0)
+            val5 = tl.load(A_ptr + addr_base, mask=mask, other=0.0)
+            val6 = tl.load(A_ptr + addr_base + 1, mask=mask, other=0.0)
+            
+            addr_base = (i+1) * N + j_indices
+            val7 = tl.load(A_ptr + addr_base - 1, mask=mask, other=0.0)
+            val8 = tl.load(A_ptr + addr_base, mask=mask, other=0.0)
+            val9 = tl.load(A_ptr + addr_base + 1, mask=mask, other=0.0)
+            
+            result = (val1 + val2 + val3 + val4 + val5 + val6 + val7 + val8 + val9) / 9.0
+            
+            tl.store(A_ptr + i * N + j_indices, result, mask=mask)
 
 def seidel_2d_triton(A, N, TSTEPS):
     BLOCK_SIZE = 16
     
-    # Calculate number of interior points
-    total_elements = (N - 2) * (N - 2)
-    elements_per_block = BLOCK_SIZE * BLOCK_SIZE
-    num_blocks = (total_elements + elements_per_block - 1) // elements_per_block
+    grid_i = triton.cdiv(N - 2, BLOCK_SIZE)
+    grid_j = triton.cdiv(N - 2, BLOCK_SIZE)
     
-    # Launch kernel
-    seidel_2d_kernel[(num_blocks,)](
-        A, N, TSTEPS, BLOCK_SIZE
-    )
+    seidel_2d_kernel[(grid_i, grid_j)](A, N, TSTEPS, BLOCK_SIZE)
 ```
 
 
@@ -148,6 +176,14 @@ def seidel_2d_triton(A, N, TSTEPS):
 ```
 
 ## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
 
 **NEVER use `tl.arange()` inside a for loop:**
 ```python

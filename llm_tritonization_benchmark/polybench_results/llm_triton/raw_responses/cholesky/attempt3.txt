@@ -1,86 +1,92 @@
 
-## PREVIOUS ATTEMPT HAS LOW PERFORMANCE - NEEDS BETTER PARALLELIZATION
+## PREVIOUS ATTEMPT FAILED - NUMERICAL ERROR
 
-Your last attempt is CORRECT but has very low performance (speedup: 0.02433x).
-This indicates the code is NOT properly parallelized for GPU execution.
+Your last attempt produced incorrect numerical results.
 
-**CRITICAL ISSUE**: Your kernel is likely running sequentially instead of in parallel.
+**Error type**: Numerical error (values don't match)
+**Max error observed**: 2.460303e+00
 
-**Common parallelization mistakes to fix**:
-1. Using `grid=(1,)` with a single thread doing all work — this is SEQUENTIAL on GPU!
-2. Using scalar `tl.load`/`tl.store` in a Python for loop instead of vectorized block operations
-3. NOT using `tl.program_id(0)` to distribute work across GPU blocks
-4. Processing ALL elements in one block instead of splitting across multiple blocks
+Please fix the numerical computation. Common causes:
+- Incorrect loop bounds or indices
+- Wrong array access patterns (row-major vs column-major)
+- Missing or incorrect operations
+- Off-by-one errors
+- Cloning input arrays instead of modifying them in-place (the test checks the original tensors)
 
-**CORRECT parallel pattern** (each block handles different elements):
-```python
-@triton.jit
-def kernel(..., BLOCK_SIZE: tl.constexpr):
-    pid = tl.program_id(0)                    # Get unique block ID
-    block_start = pid * BLOCK_SIZE            # Each block starts at different offset
-    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # Each block handles BLOCK_SIZE elements
-    mask = offsets < n_elements
-    # Load, compute, store for THIS block only - NO for loop over all elements!
-```
-
-**For 2D kernels**, parallelize the outer loop dimension:
-```python
-@triton.jit
-def kernel(..., N, BLOCK_SIZE: tl.constexpr):
-    row = tl.program_id(0)  # Each block handles one row
-    col_offsets = tl.arange(0, BLOCK_SIZE)
-    # Process row 'row' with vectorized column access
-```
-
-## LAST ATTEMPT (NEEDS PARALLELIZATION FIX):
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
 ```python
 import triton
 import triton.language as tl
 import torch
 
 @triton.jit
-def cholesky_kernel(A_ptr, N, i, BLOCK_SIZE: tl.constexpr):
-    # Process j < i
+def cholesky_kernel(A_ptr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    row = tl.program_id(0)
+    
+    if row >= N:
+        return
+    
+    i = row
+    
+    # j < i case
     for j in range(i):
-        # Compute A[i][j] -= A[i][k] * A[j][k] for k < j
-        for k in range(j):
-            i_k_idx = i * N + k
-            j_k_idx = j * N + k
-            a_i_k = tl.load(A_ptr + i_k_idx)
-            a_j_k = tl.load(A_ptr + j_k_idx)
+        # Inner k loop: A[i][j] -= A[i][k] * A[j][k]
+        col_offsets = tl.arange(0, BLOCK_SIZE)
+        
+        for k_start in range(0, j, BLOCK_SIZE):
+            k_offsets = k_start + col_offsets
+            k_mask = k_offsets < j
             
-            i_j_idx = i * N + j
-            a_i_j = tl.load(A_ptr + i_j_idx)
-            a_i_j -= a_i_k * a_j_k
-            tl.store(A_ptr + i_j_idx, a_i_j)
+            i_k_offsets = i * N + k_offsets
+            j_k_offsets = j * N + k_offsets
+            
+            a_i_k = tl.load(A_ptr + i_k_offsets, mask=k_mask, other=0.0)
+            a_j_k = tl.load(A_ptr + j_k_offsets, mask=k_mask, other=0.0)
+            
+            i_j_offset = i * N + j
+            a_i_j = tl.load(A_ptr + i_j_offset)
+            
+            reduction = tl.sum(a_i_k * a_j_k)
+            a_i_j = a_i_j - reduction
+            tl.store(A_ptr + i_j_offset, a_i_j)
         
         # A[i][j] /= A[j][j]
-        i_j_idx = i * N + j
-        j_j_idx = j * N + j
-        a_i_j = tl.load(A_ptr + i_j_idx)
-        a_j_j = tl.load(A_ptr + j_j_idx)
-        a_i_j /= a_j_j
-        tl.store(A_ptr + i_j_idx, a_i_j)
+        i_j_offset = i * N + j
+        j_j_offset = j * N + j
+        
+        a_i_j = tl.load(A_ptr + i_j_offset)
+        a_j_j = tl.load(A_ptr + j_j_offset)
+        
+        a_i_j = a_i_j / a_j_j
+        tl.store(A_ptr + i_j_offset, a_i_j)
     
-    # Process diagonal case (i == j)
-    i_i_idx = i * N + i
-    a_i_i = tl.load(A_ptr + i_i_idx)
+    # i == j case: A[i][i] -= A[i][k] * A[i][k]
+    col_offsets = tl.arange(0, BLOCK_SIZE)
     
-    for k in range(i):
-        i_k_idx = i * N + k
-        a_i_k = tl.load(A_ptr + i_k_idx)
-        a_i_i -= a_i_k * a_i_k
+    for k_start in range(0, i, BLOCK_SIZE):
+        k_offsets = k_start + col_offsets
+        k_mask = k_offsets < i
+        
+        i_k_offsets = i * N + k_offsets
+        a_i_k = tl.load(A_ptr + i_k_offsets, mask=k_mask, other=0.0)
+        
+        i_i_offset = i * N + i
+        a_i_i = tl.load(A_ptr + i_i_offset)
+        
+        reduction = tl.sum(a_i_k * a_i_k)
+        a_i_i = a_i_i - reduction
+        tl.store(A_ptr + i_i_offset, a_i_i)
     
+    # A[i][i] = sqrt(A[i][i])
+    i_i_offset = i * N + i
+    a_i_i = tl.load(A_ptr + i_i_offset)
     a_i_i = tl.sqrt(a_i_i)
-    tl.store(A_ptr + i_i_idx, a_i_i)
+    tl.store(A_ptr + i_i_offset, a_i_i)
 
 def cholesky_triton(A, N):
-    # Launch kernel for each i value sequentially
-    for i in range(N):
-        grid = (1,)
-        cholesky_kernel[grid](
-            A, N, i, BLOCK_SIZE=32
-        )
+    BLOCK_SIZE = 32
+    grid = (N,)
+    cholesky_kernel[grid](A, N, BLOCK_SIZE)
 ```
 
 
@@ -138,29 +144,10 @@ for (i = 0; i < N; i++) {
 ## WAR (Write-After-Read) Dependencies
 
 **Note**: This kernel has WAR (Write-After-Read) dependencies.
-If you split the computation into **separate Triton kernels** launched sequentially, kernel launch barriers handle these dependencies naturally — no cloning needed.
-Cloning is only needed if reads and writes to the same array happen **within a single kernel**.
 
 **Arrays with WAR dependencies**: A
-- Read A[(i), (k)] may conflict with Write A[(i), (j)] from different iteration
-- Read A[(j), (k)] may conflict with Write A[(i), (j)] from different iteration
 
-**If using a single kernel**: Create read-only copies before the parallel region:
-```python
-A_copy = A.clone()  # Read from copy, write to original
-```
-**If using separate kernels**: No cloning needed — launch one kernel per phase.
-
-
-## Parallelization Analysis
-
-**Loop dimensions**: ['i', 'j']
-**Triangular bounds**: j < i
-
-- Parallelize `j`, sequential `i`: INVALID
-  - CHAIN DEPENDENCY: read [(j), (k)] differs from write [(i), (j)]. Different j values may have inter-dependencies.
-
-- Parallelize `i`, sequential `j`: VALID
+This kernel is **inherently sequential** — no dimension can be safely parallelized. Use `grid=(1,)` with sequential loops. No cloning needed since execution is sequential.
 
 
 ## Array Information:
@@ -187,6 +174,14 @@ def cholesky_triton(A, N):
 ```
 
 ## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
 
 **NEVER use `tl.arange()` inside a for loop:**
 ```python

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for 2mm (Polybench) - attempt 10"""
+"""Correctness test for 2mm (Polybench) - attempt 1"""
 import sys
 import ctypes
 import numpy as np
@@ -11,7 +11,7 @@ import torch
 # Import Triton implementation
 try:
     import importlib
-    _mod = importlib.import_module("polybench_results.llm_triton_no_analysis.2mm.attempt10")
+    _mod = importlib.import_module("polybench_results.llm_triton.2mm.attempt1")
     k2mm_triton = _mod.k2mm_triton
 except ImportError as e:
     print(f"Import error: {e}")

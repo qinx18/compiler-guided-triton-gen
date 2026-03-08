@@ -1,0 +1,211 @@
+
+## PREVIOUS ATTEMPT HAS LOW PERFORMANCE - NEEDS BETTER PARALLELIZATION
+
+Your last attempt is CORRECT but has very low performance (speedup: 0.040869x).
+This indicates the code is NOT properly parallelized for GPU execution.
+
+**CRITICAL ISSUE**: Your kernel is likely running sequentially instead of in parallel.
+
+**Common parallelization mistakes to fix**:
+1. Using `grid=(1,)` with a single thread doing all work — this is SEQUENTIAL on GPU!
+2. Using scalar `tl.load`/`tl.store` in a Python for loop instead of vectorized block operations
+3. NOT using `tl.program_id(0)` to distribute work across GPU blocks
+4. Processing ALL elements in one block instead of splitting across multiple blocks
+
+**CORRECT parallel pattern** (each block handles different elements):
+```python
+@triton.jit
+def kernel(..., BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)                    # Get unique block ID
+    block_start = pid * BLOCK_SIZE            # Each block starts at different offset
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # Each block handles BLOCK_SIZE elements
+    mask = offsets < n_elements
+    # Load, compute, store for THIS block only - NO for loop over all elements!
+```
+
+**For 2D kernels**, parallelize the outer loop dimension:
+```python
+@triton.jit
+def kernel(..., N, BLOCK_SIZE: tl.constexpr):
+    row = tl.program_id(0)  # Each block handles one row
+    col_offsets = tl.arange(0, BLOCK_SIZE)
+    # Process row 'row' with vectorized column access
+```
+
+## LAST ATTEMPT (NEEDS PARALLELIZATION FIX):
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def cholesky_kernel(A_ptr, N: tl.constexpr):
+    # Single thread processes entire matrix sequentially
+    tid = tl.program_id(0)
+    
+    if tid != 0:
+        return
+    
+    for i in range(N):
+        # j < i case
+        for j in range(i):
+            for k in range(j):
+                # A[i][j] -= A[i][k] * A[j][k]
+                a_ik = tl.load(A_ptr + i * N + k)
+                a_jk = tl.load(A_ptr + j * N + k)
+                a_ij = tl.load(A_ptr + i * N + j)
+                a_ij -= a_ik * a_jk
+                tl.store(A_ptr + i * N + j, a_ij)
+            
+            # A[i][j] /= A[j][j]
+            a_ij = tl.load(A_ptr + i * N + j)
+            a_jj = tl.load(A_ptr + j * N + j)
+            a_ij /= a_jj
+            tl.store(A_ptr + i * N + j, a_ij)
+        
+        # i == j case (diagonal)
+        for k in range(i):
+            # A[i][i] -= A[i][k] * A[i][k]
+            a_ik = tl.load(A_ptr + i * N + k)
+            a_ii = tl.load(A_ptr + i * N + i)
+            a_ii -= a_ik * a_ik
+            tl.store(A_ptr + i * N + i, a_ii)
+        
+        # A[i][i] = sqrt(A[i][i])
+        a_ii = tl.load(A_ptr + i * N + i)
+        a_ii = tl.sqrt(a_ii)
+        tl.store(A_ptr + i * N + i, a_ii)
+
+def cholesky_triton(A, N):
+    cholesky_kernel[(1,)](A, N)
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define N 120
+
+float A[N][N];
+
+void cholesky_kernel() {
+  int i, j, k;
+#pragma scop
+  for (i = 0; i < N; i++) {
+     //j<i
+     for (j = 0; j < i; j++) {
+        for (k = 0; k < j; k++) {
+           A[i][j] -= A[i][k] * A[j][k];
+        }
+        A[i][j] /= A[j][j];
+     }
+     // i==j case
+     for (k = 0; k < i; k++) {
+        A[i][i] -= A[i][k] * A[i][k];
+     }
+     A[i][i] = sqrtf(A[i][i]);
+  }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (i = 0; i < N; i++) {
+     //j<i
+     for (j = 0; j < i; j++) {
+        for (k = 0; k < j; k++) {
+           A[i][j] -= A[i][k] * A[j][k];
+        }
+        A[i][j] /= A[j][j];
+     }
+     // i==j case
+     for (k = 0; k < i; k++) {
+        A[i][i] -= A[i][k] * A[i][k];
+     }
+     A[i][i] = sqrtf(A[i][i]);
+  }
+```
+
+## WAR (Write-After-Read) Dependencies
+
+**Note**: This kernel has WAR (Write-After-Read) dependencies.
+
+**Arrays with WAR dependencies**: A
+
+This kernel is **inherently sequential** — no dimension can be safely parallelized. Use `grid=(1,)` with sequential loops. No cloning needed since execution is sequential.
+
+
+## Array Information:
+- `A`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `N` = 120
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `cholesky_kernel`
+2. Includes a Python wrapper function named `cholesky_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def cholesky_triton(A, N):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 8 of 10. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

@@ -5,53 +5,39 @@ import torch
 @triton.jit
 def durbin_kernel(r_ptr, y_ptr, z_ptr, N: tl.constexpr):
     # Initialize
-    tl.store(y_ptr, -tl.load(r_ptr))
-    beta = 1.0
-    alpha = -tl.load(r_ptr)
+    r0 = tl.load(r_ptr)
+    tl.store(y_ptr, -r0)
     
-    # Main loop - must be sequential due to dependencies
+    beta = 1.0
+    alpha = -r0
+    
+    # Sequential loop over k
     for k in range(1, N):
         # Update beta
         beta = (1.0 - alpha * alpha) * beta
         
-        # Compute sum using vectorized operations
+        # Compute sum = sum(r[k-i-1] * y[i]) for i in [0, k)
         sum_val = 0.0
-        BLOCK_SIZE = 128
-        offsets = tl.arange(0, BLOCK_SIZE)
-        
-        for block_start in range(0, k, BLOCK_SIZE):
-            current_offsets = block_start + offsets
-            mask = current_offsets < k
-            
-            r_indices = k - current_offsets - 1
-            r_vals = tl.load(r_ptr + r_indices, mask=mask, other=0.0)
-            y_vals = tl.load(y_ptr + current_offsets, mask=mask, other=0.0)
-            
-            products = r_vals * y_vals
-            sum_val += tl.sum(tl.where(mask, products, 0.0))
+        for i in range(k):
+            r_val = tl.load(r_ptr + (k - i - 1))
+            y_val = tl.load(y_ptr + i)
+            sum_val += r_val * y_val
         
         # Update alpha
-        alpha = -(tl.load(r_ptr + k) + sum_val) / beta
+        r_k = tl.load(r_ptr + k)
+        alpha = -(r_k + sum_val) / beta
         
-        # Update z array
-        for block_start in range(0, k, BLOCK_SIZE):
-            current_offsets = block_start + offsets
-            mask = current_offsets < k
-            
-            y_vals = tl.load(y_ptr + current_offsets, mask=mask, other=0.0)
-            reverse_indices = k - current_offsets - 1
-            y_reverse_vals = tl.load(y_ptr + reverse_indices, mask=mask, other=0.0)
-            
-            z_vals = y_vals + alpha * y_reverse_vals
-            tl.store(z_ptr + current_offsets, z_vals, mask=mask)
+        # Update z[i] = y[i] + alpha * y[k-i-1] for i in [0, k)
+        for i in range(k):
+            y_i = tl.load(y_ptr + i)
+            y_k_minus_i_minus_1 = tl.load(y_ptr + (k - i - 1))
+            z_i = y_i + alpha * y_k_minus_i_minus_1
+            tl.store(z_ptr + i, z_i)
         
-        # Copy z to y
-        for block_start in range(0, k, BLOCK_SIZE):
-            current_offsets = block_start + offsets
-            mask = current_offsets < k
-            
-            z_vals = tl.load(z_ptr + current_offsets, mask=mask, other=0.0)
-            tl.store(y_ptr + current_offsets, z_vals, mask=mask)
+        # Copy z to y: y[i] = z[i] for i in [0, k)
+        for i in range(k):
+            z_i = tl.load(z_ptr + i)
+            tl.store(y_ptr + i, z_i)
         
         # Set y[k] = alpha
         tl.store(y_ptr + k, alpha)

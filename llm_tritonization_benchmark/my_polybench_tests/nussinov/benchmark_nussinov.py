@@ -10,7 +10,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton_no_analysis.nussinov.attempt1 import nussinov_triton
+    from polybench_results.llm_triton.nussinov.attempt5 import nussinov_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

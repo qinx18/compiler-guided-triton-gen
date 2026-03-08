@@ -1,59 +1,17 @@
 
-## PREVIOUS ATTEMPT FAILED
+## PREVIOUS ATTEMPT FAILED - NUMERICAL ERROR
 
-**Error type**: unknown
-**Error message**:
-```
-  Test 1: ERROR - at 59:16:
-    # Process k values in blocks
-    for k_block_start in range(i_val + 1, N, BLOCK_SIZE):
-        k_block_offsets = k_block_start + k_offsets
-        k_valid_mask = (k_block_offsets >= i_val + 1) & (k_block_offsets < N)
+Your last attempt produced incorrect numerical results.
 
-        # For each k in this block
-        for k_local in range(BLOCK_SIZE):
-            k_val = k_block_start + k_local
+**Error type**: Numerical error (values don't match)
+**Max error observed**: 2.300000e+01
 
-            # Skip invalid k values
-            if k_val >= N:
-                break
-                ^
-unsupported AST node type: Break
-  Test 2: ERROR - at 59:16:
-    # Process k values in blocks
-    for k_block_start in range(i_val + 1, N, BLOCK_SIZE):
-        k_block_offsets = k_block_start + k_offsets
-        k_valid_mask = (k_block_offsets >= i_val + 1) & (k_block_offsets < N)
-
-        # For each k in this block
-        for k_local in range(BLOCK_SIZE):
-            k_val = k_block_start + k_local
-
-            # Skip invalid k values
-            if k_val >= N:
-                break
-                ^
-unsupported AST node type: Break
-  Test 3: ERROR - at 59:16:
-    # Process k values in blocks
-    for k_block_start in range(i_val + 1, N, BLOCK_SIZE):
-        k_block_offsets = k_block_start + k_offsets
-        k_valid_mask = (k_block_offsets >= i_val + 1) & (k_block_offsets < N)
-
-        # For each k in this block
-        for k_local in range(BLOCK_SIZE):
-            k_val = k_block_start + k_local
-
-            # Skip invalid k values
-            if k_val >= N:
-                break
-                ^
-unsupported AST node type: Break
-Some tests FAILED!
-
-```
-
-Please fix the error.
+Please fix the numerical computation. Common causes:
+- Incorrect loop bounds or indices
+- Wrong array access patterns (row-major vs column-major)
+- Missing or incorrect operations
+- Off-by-one errors
+- Cloning input arrays instead of modifying them in-place (the test checks the original tensors)
 
 ## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
 ```python
@@ -158,6 +116,14 @@ def nussinov_triton(seq, table, N):
 ```
 
 ## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
 
 **NEVER use `tl.arange()` inside a for loop:**
 ```python

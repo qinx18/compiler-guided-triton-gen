@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for trisolv (Polybench) - attempt 10"""
+"""Correctness test for trisolv (Polybench) - attempt 1"""
 import sys
 import ctypes
 import numpy as np
@@ -10,7 +10,7 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.trisolv.attempt10 import trisolv_triton
+    from polybench_results.llm_triton.trisolv.attempt1 import trisolv_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

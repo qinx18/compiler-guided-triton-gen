@@ -1,0 +1,22 @@
+{
+  "3mm": {
+    "small_triton_ms": 0.155489,
+    "large_triton_ms": 0.16419794410467148,
+    "small_speedup": 13.04266,
+    "scale_factor": 8,
+    "small_params": {
+      "NI": 40,
+      "NJ": 50,
+      "NK": 60,
+      "NL": 70,
+      "NM": 80
+    },
+    "large_params": {
+      "NI": 320,
+      "NJ": 400,
+      "NK": 480,
+      "NL": 560,
+      "NM": 640
+    }
+  }
+}

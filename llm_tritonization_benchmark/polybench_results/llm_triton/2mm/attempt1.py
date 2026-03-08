@@ -1,122 +1,64 @@
 import triton
 import triton.language as tl
-import torch
 
 @triton.jit
-def k2mm_kernel(A_ptr, B_ptr, C_ptr, D_ptr, tmp_ptr, alpha, beta, NI, NJ, NK, NL,
-                A_stride_0, A_stride_1, B_stride_0, B_stride_1,
-                C_stride_0, C_stride_1, D_stride_0, D_stride_1,
-                tmp_stride_0, tmp_stride_1,
-                BLOCK_SIZE_I: tl.constexpr, BLOCK_SIZE_J: tl.constexpr,
-                BLOCK_SIZE_K: tl.constexpr):
+def k2mm_kernel(A_ptr, B_ptr, C_ptr, D_ptr, tmp_ptr, alpha, beta, 
+                NI: tl.constexpr, NJ: tl.constexpr, NK: tl.constexpr, NL: tl.constexpr,
+                BLOCK_SIZE: tl.constexpr):
     
-    # Get program IDs
-    pid_i = tl.program_id(0)
-    pid_j = tl.program_id(1)
+    offsets = tl.arange(0, BLOCK_SIZE)
     
-    # Define offsets once at the start
-    offsets_i = tl.arange(0, BLOCK_SIZE_I)
-    offsets_j = tl.arange(0, BLOCK_SIZE_J)
-    offsets_k = tl.arange(0, BLOCK_SIZE_K)
-    
-    # Calculate current row and column blocks
-    i_start = pid_i * BLOCK_SIZE_I
-    j_start = pid_j * BLOCK_SIZE_J
-    
-    current_i_offsets = i_start + offsets_i
-    current_j_offsets = j_start + offsets_j
-    
-    # Masks for boundary checking
-    i_mask = current_i_offsets < NI
-    j_mask = current_j_offsets < NJ
-    
-    # First loop: tmp[i][j] = alpha * A[i][k] * B[k][j]
-    # Initialize tmp block to zero
-    tmp_block = tl.zeros((BLOCK_SIZE_I, BLOCK_SIZE_J), dtype=tl.float32)
-    
-    # Loop over K dimension in blocks
-    for k_start in range(0, NK, BLOCK_SIZE_K):
-        current_k_offsets = k_start + offsets_k
-        k_mask = current_k_offsets < NK
+    # First phase: tmp = alpha * A * B
+    for i in range(NI):
+        # Vectorized computation over j dimension
+        j_mask = offsets < NJ
+        j_offsets = offsets
         
-        # Load A block [i, k]
-        A_ptrs = A_ptr + current_i_offsets[:, None] * A_stride_0 + current_k_offsets[None, :] * A_stride_1
-        A_mask = i_mask[:, None] & k_mask[None, :]
-        A_block = tl.load(A_ptrs, mask=A_mask, other=0.0)
+        # Initialize tmp[i][j] = 0.0
+        tmp_indices = i * NJ + j_offsets
+        tl.store(tmp_ptr + tmp_indices, 0.0, mask=j_mask)
         
-        # Load B block [k, j]
-        B_ptrs = B_ptr + current_k_offsets[:, None] * B_stride_0 + current_j_offsets[None, :] * B_stride_1
-        B_mask = k_mask[:, None] & j_mask[None, :]
-        B_block = tl.load(B_ptrs, mask=B_mask, other=0.0)
-        
-        # Accumulate matrix multiplication
-        tmp_block += alpha * tl.dot(A_block, B_block)
+        # Accumulate: tmp[i][j] += alpha * A[i][k] * B[k][j]
+        for k in range(NK):
+            a_val = tl.load(A_ptr + i * NK + k)  # A[i][k] - scalar
+            b_indices = k * NJ + j_offsets  # B[k][j] - vector
+            b_vals = tl.load(B_ptr + b_indices, mask=j_mask)
+            
+            # Load current tmp values
+            tmp_vals = tl.load(tmp_ptr + tmp_indices, mask=j_mask)
+            
+            # Update tmp[i][j] += alpha * A[i][k] * B[k][j]
+            new_tmp_vals = tmp_vals + alpha * a_val * b_vals
+            tl.store(tmp_ptr + tmp_indices, new_tmp_vals, mask=j_mask)
     
-    # Store tmp block
-    tmp_ptrs = tmp_ptr + current_i_offsets[:, None] * tmp_stride_0 + current_j_offsets[None, :] * tmp_stride_1
-    tmp_mask = i_mask[:, None] & j_mask[None, :]
-    tl.store(tmp_ptrs, tmp_block, mask=tmp_mask)
-    
-    # Synchronize all blocks before second computation
     tl.debug_barrier()
     
-    # Second loop: D[i][j] = beta * D[i][j] + tmp[i][k] * C[k][j]
-    # Only process blocks that will compute D elements
-    if pid_j * BLOCK_SIZE_J >= NL:
-        return
-    
-    # Recalculate j offsets for NL dimension
-    j_offsets_l = tl.arange(0, BLOCK_SIZE_J)
-    current_j_offsets_l = pid_j * BLOCK_SIZE_J + j_offsets_l
-    j_mask_l = current_j_offsets_l < NL
-    
-    # Load and scale D block by beta
-    D_ptrs = D_ptr + current_i_offsets[:, None] * D_stride_0 + current_j_offsets_l[None, :] * D_stride_1
-    D_mask = i_mask[:, None] & j_mask_l[None, :]
-    D_block = tl.load(D_ptrs, mask=D_mask, other=0.0)
-    D_block = D_block * beta
-    
-    # Loop over NJ dimension (k in the second loop)
-    for k_start in range(0, NJ, BLOCK_SIZE_K):
-        current_k_offsets = k_start + offsets_k
-        k_mask = current_k_offsets < NJ
+    # Second phase: D = tmp * C + beta * D
+    for i in range(NI):
+        # Vectorized computation over j dimension (now for NL)
+        j_mask = offsets < NL
+        j_offsets = offsets
         
-        # Load tmp block [i, k]
-        tmp_ptrs_read = tmp_ptr + current_i_offsets[:, None] * tmp_stride_0 + current_k_offsets[None, :] * tmp_stride_1
-        tmp_mask_read = i_mask[:, None] & k_mask[None, :]
-        tmp_block_read = tl.load(tmp_ptrs_read, mask=tmp_mask_read, other=0.0)
+        # D[i][j] *= beta
+        d_indices = i * NL + j_offsets
+        d_vals = tl.load(D_ptr + d_indices, mask=j_mask)
+        d_vals = d_vals * beta
         
-        # Load C block [k, j]
-        C_ptrs = C_ptr + current_k_offsets[:, None] * C_stride_0 + current_j_offsets_l[None, :] * C_stride_1
-        C_mask = k_mask[:, None] & j_mask_l[None, :]
-        C_block = tl.load(C_ptrs, mask=C_mask, other=0.0)
+        # Accumulate: D[i][j] += tmp[i][k] * C[k][j]
+        for k in range(NJ):
+            tmp_val = tl.load(tmp_ptr + i * NJ + k)  # tmp[i][k] - scalar
+            c_indices = k * NL + j_offsets  # C[k][j] - vector
+            c_vals = tl.load(C_ptr + c_indices, mask=j_mask)
+            
+            # Update D[i][j] += tmp[i][k] * C[k][j]
+            d_vals = d_vals + tmp_val * c_vals
         
-        # Accumulate matrix multiplication
-        D_block += tl.dot(tmp_block_read, C_block)
-    
-    # Store final D block
-    tl.store(D_ptrs, D_block, mask=D_mask)
+        tl.store(D_ptr + d_indices, d_vals, mask=j_mask)
 
 def k2mm_triton(A, B, C, D, tmp, alpha, beta, NI, NJ, NK, NL):
-    # Block sizes
-    BLOCK_SIZE_I = 16
-    BLOCK_SIZE_J = 16
-    BLOCK_SIZE_K = 32
+    BLOCK_SIZE = triton.next_power_of_2(max(NJ, NL))
     
-    # Grid dimensions
-    grid_i = triton.cdiv(NI, BLOCK_SIZE_I)
-    grid_j = max(triton.cdiv(NJ, BLOCK_SIZE_J), triton.cdiv(NL, BLOCK_SIZE_J))
-    grid = (grid_i, grid_j)
-    
-    # Launch kernel
-    k2mm_kernel[grid](
-        A, B, C, D, tmp, alpha, beta, NI, NJ, NK, NL,
-        A.stride(0), A.stride(1),
-        B.stride(0), B.stride(1),
-        C.stride(0), C.stride(1),
-        D.stride(0), D.stride(1),
-        tmp.stride(0), tmp.stride(1),
-        BLOCK_SIZE_I=BLOCK_SIZE_I,
-        BLOCK_SIZE_J=BLOCK_SIZE_J,
-        BLOCK_SIZE_K=BLOCK_SIZE_K
+    k2mm_kernel[(1,)](
+        A, B, C, D, tmp, alpha, beta,
+        NI, NJ, NK, NL, BLOCK_SIZE
     )

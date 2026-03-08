@@ -3,53 +3,48 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def gemm_kernel(A_ptr, B_ptr, C_ptr, alpha, beta, NI, NJ, NK, 
-                stride_A_i, stride_A_k, stride_B_k, stride_B_j, stride_C_i, stride_C_j,
-                BLOCK_I: tl.constexpr, BLOCK_J: tl.constexpr):
-    pid_i = tl.program_id(0)
-    pid_j = tl.program_id(1)
+def gemm_kernel(A_ptr, B_ptr, C_ptr, alpha, beta, 
+                NI: tl.constexpr, NJ: tl.constexpr, NK: tl.constexpr,
+                BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(axis=0)
+    i = pid
     
-    i_start = pid_i * BLOCK_I
-    j_start = pid_j * BLOCK_J
+    if i >= NI:
+        return
     
-    i_offsets = tl.arange(0, BLOCK_I)
-    j_offsets = tl.arange(0, BLOCK_J)
+    # First loop: C[i][j] *= beta for j in range(NJ)
+    j_offsets = tl.arange(0, BLOCK_SIZE)
+    for j_start in range(0, NJ, BLOCK_SIZE):
+        j_indices = j_start + j_offsets
+        j_mask = j_indices < NJ
+        
+        c_offsets = i * NJ + j_indices
+        c_vals = tl.load(C_ptr + c_offsets, mask=j_mask)
+        c_vals = c_vals * beta
+        tl.store(C_ptr + c_offsets, c_vals, mask=j_mask)
     
-    i_indices = i_start + i_offsets
-    j_indices = j_start + j_offsets
-    
-    i_mask = i_indices < NI
-    j_mask = j_indices < NJ
-    
-    # First multiply C by beta
-    c_ptrs = C_ptr + i_indices[:, None] * stride_C_i + j_indices[None, :] * stride_C_j
-    c_mask = i_mask[:, None] & j_mask[None, :]
-    c_vals = tl.load(c_ptrs, mask=c_mask, other=0.0)
-    c_vals = c_vals * beta
-    
-    # Accumulate A * B over k dimension
+    # Second loop: C[i][j] += alpha * A[i][k] * B[k][j]
     for k in range(NK):
-        a_ptrs = A_ptr + i_indices * stride_A_i + k * stride_A_k
-        a_vals = tl.load(a_ptrs, mask=i_mask, other=0.0)
+        a_val = tl.load(A_ptr + i * NK + k)
         
-        b_ptrs = B_ptr + k * stride_B_k + j_indices * stride_B_j
-        b_vals = tl.load(b_ptrs, mask=j_mask, other=0.0)
-        
-        ab_vals = alpha * a_vals[:, None] * b_vals[None, :]
-        c_vals = c_vals + ab_vals
-    
-    tl.store(c_ptrs, c_vals, mask=c_mask)
+        for j_start in range(0, NJ, BLOCK_SIZE):
+            j_indices = j_start + j_offsets
+            j_mask = j_indices < NJ
+            
+            b_offsets = k * NJ + j_indices
+            b_vals = tl.load(B_ptr + b_offsets, mask=j_mask)
+            
+            c_offsets = i * NJ + j_indices
+            c_vals = tl.load(C_ptr + c_offsets, mask=j_mask)
+            
+            c_vals = c_vals + alpha * a_val * b_vals
+            tl.store(C_ptr + c_offsets, c_vals, mask=j_mask)
 
 def gemm_triton(A, B, C, alpha, beta, NI, NJ, NK):
-    BLOCK_I = 16
-    BLOCK_J = 16
-    
-    grid = (triton.cdiv(NI, BLOCK_I), triton.cdiv(NJ, BLOCK_J))
+    BLOCK_SIZE = 64
+    grid = (triton.cdiv(NI, 1),)
     
     gemm_kernel[grid](
-        A, B, C, alpha, beta, NI, NJ, NK,
-        A.stride(0), A.stride(1),
-        B.stride(0), B.stride(1),
-        C.stride(0), C.stride(1),
-        BLOCK_I, BLOCK_J
+        A, B, C, alpha, beta,
+        NI, NJ, NK, BLOCK_SIZE
     )

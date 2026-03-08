@@ -2,57 +2,70 @@ import triton
 import triton.language as tl
 import torch
 
+def match(b1, b2):
+    return (b1 + b2) == 3
+
 @triton.jit
-def nussinov_kernel(seq_ptr, table_ptr, N, BLOCK_SIZE: tl.constexpr):
-    # Process one i value per program
-    program_id = tl.program_id(0)
-    i_val = N - 1 - program_id
+def nussinov_kernel(seq_ptr, table_ptr, N: tl.constexpr, i: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    j_start = (i + 1) + pid * BLOCK_SIZE
     
-    # Process j values sequentially for this i
-    for j_val in range(i_val + 1, N):
-        table_ij_idx = i_val * N + j_val
-        current_val = tl.load(table_ptr + table_ij_idx)
+    j_offsets = j_start + tl.arange(0, BLOCK_SIZE)
+    j_mask = j_offsets < N
+    
+    # Load current values
+    table_indices = i * N + j_offsets
+    current_vals = tl.load(table_ptr + table_indices, mask=j_mask, other=0)
+    
+    # Update from left: table[i][j-1]
+    left_indices = i * N + (j_offsets - 1)
+    left_mask = j_mask & (j_offsets > 0)
+    left_vals = tl.load(table_ptr + left_indices, mask=left_mask, other=0)
+    current_vals = tl.where(left_mask, tl.maximum(current_vals, left_vals), current_vals)
+    
+    # Update from below: table[i+1][j]
+    below_indices = (i + 1) * N + j_offsets
+    below_mask = j_mask & (i + 1 < N)
+    below_vals = tl.load(table_ptr + below_indices, mask=below_mask, other=0)
+    current_vals = tl.where(below_mask, tl.maximum(current_vals, below_vals), current_vals)
+    
+    # Update from diagonal: table[i+1][j-1]
+    diag_indices = (i + 1) * N + (j_offsets - 1)
+    diag_mask = j_mask & (j_offsets > 0) & (i + 1 < N)
+    diag_vals = tl.load(table_ptr + diag_indices, mask=diag_mask, other=0)
+    
+    # Load sequence values for matching
+    seq_i_val = tl.load(seq_ptr + i)
+    seq_j_vals = tl.load(seq_ptr + j_offsets, mask=j_mask, other=0)
+    match_vals = tl.where((seq_i_val + seq_j_vals) == 3, 1, 0)
+    
+    # Apply diagonal update
+    match_mask = diag_mask & (i < j_offsets - 1)
+    no_match_mask = diag_mask & (i >= j_offsets - 1)
+    
+    current_vals = tl.where(match_mask, tl.maximum(current_vals, diag_vals + match_vals), current_vals)
+    current_vals = tl.where(no_match_mask, tl.maximum(current_vals, diag_vals), current_vals)
+    
+    # Update from split points - process each k
+    for k in range(i + 1, N):
+        k_mask = j_mask & (k < j_offsets)
+        left_split_indices = i * N + k
+        right_split_indices = (k + 1) * N + j_offsets
         
-        # Update from table[i][j-1] if j-1 >= 0
-        if j_val - 1 >= 0:
-            left_val = tl.load(table_ptr + i_val * N + (j_val - 1))
-            current_val = tl.maximum(current_val, left_val)
+        left_split_val = tl.load(table_ptr + left_split_indices)
+        right_split_vals = tl.load(table_ptr + right_split_indices, mask=k_mask, other=0)
         
-        # Update from table[i+1][j] if i+1 < N
-        if i_val + 1 < N:
-            down_val = tl.load(table_ptr + (i_val + 1) * N + j_val)
-            current_val = tl.maximum(current_val, down_val)
-        
-        # Diagonal update if both conditions met
-        if (j_val - 1 >= 0) & (i_val + 1 < N):
-            diag_val = tl.load(table_ptr + (i_val + 1) * N + (j_val - 1))
-            
-            if i_val < j_val - 1:
-                seq_i = tl.load(seq_ptr + i_val)
-                seq_j = tl.load(seq_ptr + j_val)
-                # Match function: returns 1 if seq[i] + seq[j] == 3, else 0
-                match_score = tl.where((seq_i + seq_j) == 3, 1, 0)
-                diag_contribution = diag_val + match_score
-            else:
-                diag_contribution = diag_val
-            
-            current_val = tl.maximum(current_val, diag_contribution)
-        
-        # Process k loop: for (k=i+1; k<j; k++)
-        for k_val in range(i_val + 1, j_val):
-            left_part = tl.load(table_ptr + i_val * N + k_val)
-            right_part = tl.load(table_ptr + (k_val + 1) * N + j_val)
-            sum_val = left_part + right_part
-            current_val = tl.maximum(current_val, sum_val)
-        
-        # Store the final result
-        tl.store(table_ptr + table_ij_idx, current_val)
+        split_vals = left_split_val + right_split_vals
+        current_vals = tl.where(k_mask, tl.maximum(current_vals, split_vals), current_vals)
+    
+    # Store results
+    tl.store(table_ptr + table_indices, current_vals, mask=j_mask)
 
 def nussinov_triton(seq, table, N):
-    # Launch one program per i value
-    grid = (N,)
     BLOCK_SIZE = 32
     
-    nussinov_kernel[grid](
-        seq, table, N, BLOCK_SIZE
-    )
+    for i in range(N-1, -1, -1):
+        num_j = N - (i + 1)
+        if num_j > 0:
+            grid_size = triton.cdiv(num_j, BLOCK_SIZE)
+            nussinov_kernel[(grid_size,)](seq, table, N, i, BLOCK_SIZE)

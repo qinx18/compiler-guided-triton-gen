@@ -1,85 +1,133 @@
 
-## PREVIOUS ATTEMPT HAS LOW PERFORMANCE - NEEDS BETTER PARALLELIZATION
+## PREVIOUS ATTEMPT FAILED
 
-Your last attempt is CORRECT but has very low performance (speedup: 0.04933x).
-This indicates the code is NOT properly parallelized for GPU execution.
+**Error type**: unknown
+**Error message**:
+```
+  Test 1: ERROR - at 14:12:
+    diag_id = tl.program_id(0)
 
-**CRITICAL ISSUE**: Your kernel is likely running sequentially instead of in parallel.
+    # Process diagonals from bottom-right to top-left
+    for i_offset in range(N):
+        i = N - 1 - i_offset
 
-**Common parallelization mistakes to fix**:
-1. Using `grid=(1,)` with a single thread doing all work — this is SEQUENTIAL on GPU!
-2. Using scalar `tl.load`/`tl.store` in a Python for loop instead of vectorized block operations
-3. NOT using `tl.program_id(0)` to distribute work across GPU blocks
-4. Processing ALL elements in one block instead of splitting across multiple blocks
+        # Calculate the diagonal start and length
+        diag_start = i + 1
+        diag_len = N - diag_start
 
-**CORRECT parallel pattern** (each block handles different elements):
-```python
-@triton.jit
-def kernel(..., BLOCK_SIZE: tl.constexpr):
-    pid = tl.program_id(0)                    # Get unique block ID
-    block_start = pid * BLOCK_SIZE            # Each block starts at different offset
-    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # Each block handles BLOCK_SIZE elements
-    mask = offsets < n_elements
-    # Load, compute, store for THIS block only - NO for loop over all elements!
+        if diag_len <= 0:
+            continue
+            ^
+unsupported AST node type: Continue
+  Test 2: ERROR - at 14:12:
+    diag_id = tl.program_id(0)
+
+    # Process diagonals from bottom-right to top-left
+    for i_offset in range(N):
+        i = N - 1 - i_offset
+
+        # Calculate the diagonal start and length
+        diag_start = i + 1
+        diag_len = N - diag_start
+
+        if diag_len <= 0:
+            continue
+            ^
+unsupported AST node type: Continue
+  Test 3: ERROR - at 14:12:
+    diag_id = tl.program_id(0)
+
+    # Process diagonals from bottom-right to top-left
+    for i_offset in range(N):
+        i = N - 1 - i_offset
+
+        # Calculate the diagonal start and length
+        diag_start = i + 1
+        diag_len = N - diag_start
+
+        if diag_len <= 0:
+            continue
+            ^
+unsupported AST node type: Continue
+Some tests FAILED!
+
 ```
 
-**For 2D kernels**, parallelize the outer loop dimension:
-```python
-@triton.jit
-def kernel(..., N, BLOCK_SIZE: tl.constexpr):
-    row = tl.program_id(0)  # Each block handles one row
-    col_offsets = tl.arange(0, BLOCK_SIZE)
-    # Process row 'row' with vectorized column access
-```
+Please fix the error.
 
-## LAST ATTEMPT (NEEDS PARALLELIZATION FIX):
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
 ```python
 import triton
 import triton.language as tl
 import torch
 
 @triton.jit
-def nussinov_kernel(seq_ptr, table_ptr, N):
-    # This is a sequential algorithm that cannot be effectively parallelized
-    # due to strong data dependencies. We'll process sequentially.
+def nussinov_kernel(seq_ptr, table_ptr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    # Get program ID for the diagonal
+    diag_id = tl.program_id(0)
     
-    # Process the main loops sequentially
+    # Process diagonals from bottom-right to top-left
     for i_offset in range(N):
         i = N - 1 - i_offset
-        for j in range(i + 1, N):
-            # Current table[i][j] position
-            current_idx = i * N + j
+        
+        # Calculate the diagonal start and length
+        diag_start = i + 1
+        diag_len = N - diag_start
+        
+        if diag_len <= 0:
+            continue
             
-            # Initialize current value
-            current_val = tl.load(table_ptr + current_idx)
+        # Only process if this is the correct diagonal
+        if diag_id * BLOCK_SIZE >= diag_len:
+            continue
             
-            # if (j-1>=0) table[i][j] = max_score(table[i][j], table[i][j-1]);
+        # Calculate j values for this block
+        j_offsets = tl.arange(0, BLOCK_SIZE)
+        j_vals = diag_start + diag_id * BLOCK_SIZE + j_offsets
+        j_mask = (diag_id * BLOCK_SIZE + j_offsets) < diag_len
+        
+        # Process each j in this block
+        for j_idx in range(BLOCK_SIZE):
+            if not j_mask[j_idx]:
+                continue
+                
+            j = diag_start + diag_id * BLOCK_SIZE + j_idx
+            if j >= N:
+                continue
+                
+            # Calculate table index
+            table_idx = i * N + j
+            
+            # Load current value
+            current_val = tl.load(table_ptr + table_idx)
+            
+            # Update from left neighbor: table[i][j-1]
             if j - 1 >= 0:
                 left_idx = i * N + (j - 1)
                 left_val = tl.load(table_ptr + left_idx)
                 current_val = tl.maximum(current_val, left_val)
             
-            # if (i+1<N) table[i][j] = max_score(table[i][j], table[i+1][j]);
+            # Update from bottom neighbor: table[i+1][j]
             if i + 1 < N:
-                down_idx = (i + 1) * N + j
-                down_val = tl.load(table_ptr + down_idx)
-                current_val = tl.maximum(current_val, down_val)
+                bottom_idx = (i + 1) * N + j
+                bottom_val = tl.load(table_ptr + bottom_idx)
+                current_val = tl.maximum(current_val, bottom_val)
             
-            # if (j-1>=0 && i+1<N)
+            # Update from diagonal: table[i+1][j-1] + match
             if j - 1 >= 0 and i + 1 < N:
                 diag_idx = (i + 1) * N + (j - 1)
                 diag_val = tl.load(table_ptr + diag_idx)
                 
                 if i < j - 1:
-                    # Don't allow adjacent elements to bond
+                    # Load sequence values for matching
                     seq_i = tl.load(seq_ptr + i)
                     seq_j = tl.load(seq_ptr + j)
-                    match_val = tl.where((seq_i + seq_j) == 3, 1, 0)
-                    current_val = tl.maximum(current_val, diag_val + match_val)
+                    match_score = tl.where((seq_i + seq_j) == 3, 1, 0)
+                    current_val = tl.maximum(current_val, diag_val + match_score)
                 else:
                     current_val = tl.maximum(current_val, diag_val)
             
-            # for (k=i+1; k<j; k++)
+            # Inner k loop: table[i][k] + table[k+1][j]
             for k in range(i + 1, j):
                 left_k_idx = i * N + k
                 right_k_idx = (k + 1) * N + j
@@ -88,15 +136,28 @@ def nussinov_kernel(seq_ptr, table_ptr, N):
                 current_val = tl.maximum(current_val, left_k_val + right_k_val)
             
             # Store the result
-            tl.store(table_ptr + current_idx, current_val)
+            tl.store(table_ptr + table_idx, current_val)
 
 def nussinov_triton(seq, table, N):
-    # Launch with single thread since this is inherently sequential
-    grid = (1,)
+    # Calculate maximum number of diagonals
+    max_diag_len = N - 1
+    BLOCK_SIZE = 32
     
-    nussinov_kernel[grid](
-        seq, table, N
-    )
+    # Launch kernel for each i value sequentially
+    for i_offset in range(N):
+        i = N - 1 - i_offset
+        diag_start = i + 1
+        diag_len = N - diag_start
+        
+        if diag_len <= 0:
+            continue
+            
+        num_blocks = triton.cdiv(diag_len, BLOCK_SIZE)
+        
+        if num_blocks > 0:
+            nussinov_kernel[(num_blocks,)](
+                seq, table, N, BLOCK_SIZE
+            )
 ```
 
 
@@ -197,6 +258,14 @@ def nussinov_triton(seq, table, N):
 ```
 
 ## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
 
 **NEVER use `tl.arange()` inside a for loop:**
 ```python

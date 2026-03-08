@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for deriche (Polybench) - attempt 10"""
+"""Correctness test for deriche (Polybench) - attempt 3"""
 import sys
 import ctypes
 import numpy as np
@@ -10,7 +10,7 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.deriche.attempt10 import deriche_triton
+    from polybench_results.llm_triton.deriche.attempt3 import deriche_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

@@ -1,43 +1,45 @@
+import torch
 import triton
 import triton.language as tl
-import torch
 
 @triton.jit
 def jacobi_1d_kernel(A_ptr, B_ptr, N: tl.constexpr, TSTEPS: tl.constexpr, BLOCK_SIZE: tl.constexpr):
-    # Get program ID for spatial parallelization only
-    pid_i = tl.program_id(0)
+    pid = tl.program_id(0)
     
-    # Calculate spatial indices for this block
-    block_start = pid_i * BLOCK_SIZE
-    offsets = tl.arange(0, BLOCK_SIZE)
-    i_indices = block_start + offsets + 1  # +1 because we start from i=1
+    # Calculate offsets for this block
+    block_start = pid * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
     
-    # Mask for valid spatial indices
-    mask = (i_indices >= 1) & (i_indices < N - 1)
+    # Mask for valid indices (1 to N-2)
+    mask = (offsets >= 1) & (offsets < N - 1)
     
-    # Sequential loop over timesteps
     for t in range(TSTEPS):
-        # First loop: B[i] = 0.33333 * (A[i-1] + A[i] + A[i+1])
-        A_prev = tl.load(A_ptr + i_indices - 1, mask=mask)
-        A_curr = tl.load(A_ptr + i_indices, mask=mask)
-        A_next = tl.load(A_ptr + i_indices + 1, mask=mask)
-        B_vals = 0.33333 * (A_prev + A_curr + A_next)
-        tl.store(B_ptr + i_indices, B_vals, mask=mask)
+        # First phase: B[i] = 0.33333 * (A[i-1] + A[i] + A[i+1])
+        # Load A values
+        A_left = tl.load(A_ptr + offsets - 1, mask=mask)
+        A_center = tl.load(A_ptr + offsets, mask=mask)
+        A_right = tl.load(A_ptr + offsets + 1, mask=mask)
         
-        # Second loop: A[i] = 0.33333 * (B[i-1] + B[i] + B[i+1])
-        B_prev = tl.load(B_ptr + i_indices - 1, mask=mask)
-        B_curr = tl.load(B_ptr + i_indices, mask=mask)
-        B_next = tl.load(B_ptr + i_indices + 1, mask=mask)
-        A_vals = 0.33333 * (B_prev + B_curr + B_next)
-        tl.store(A_ptr + i_indices, A_vals, mask=mask)
+        # Compute B values
+        B_new = 0.33333 * (A_left + A_center + A_right)
+        
+        # Store B values
+        tl.store(B_ptr + offsets, B_new, mask=mask)
+        
+        # Second phase: A[i] = 0.33333 * (B[i-1] + B[i] + B[i+1])
+        # Load B values
+        B_left = tl.load(B_ptr + offsets - 1, mask=mask)
+        B_center = tl.load(B_ptr + offsets, mask=mask)
+        B_right = tl.load(B_ptr + offsets + 1, mask=mask)
+        
+        # Compute A values
+        A_new = 0.33333 * (B_left + B_center + B_right)
+        
+        # Store A values
+        tl.store(A_ptr + offsets, A_new, mask=mask)
 
 def jacobi_1d_triton(A, B, N, TSTEPS):
-    BLOCK_SIZE = 64
-    
-    # Calculate grid dimensions - only parallelize spatial dimension
-    grid_i = triton.cdiv(N - 2, BLOCK_SIZE)  # N-2 because we process indices 1 to N-2
-    
-    # Launch 1D grid to parallelize space, sequential time
-    grid = (grid_i,)
+    BLOCK_SIZE = 32
+    grid = (1,)
     
     jacobi_1d_kernel[grid](A, B, N, TSTEPS, BLOCK_SIZE)

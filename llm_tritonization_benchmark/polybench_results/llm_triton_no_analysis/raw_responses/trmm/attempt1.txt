@@ -1,5 +1,5 @@
 # LLM-Generated Triton Implementation for trmm (Polybench)
-# Generated: 2026-03-02 03:30:56
+# Generated: 2026-03-05 05:51:04
 # Model: claude-sonnet-4-20250514
 
 ================================================================================
@@ -71,6 +71,14 @@ def trmm_triton(A, B, alpha, M, N):
 
 ## CRITICAL: Triton Compilation Rules
 
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
 **NEVER use `tl.arange()` inside a for loop:**
 ```python
 # WRONG
@@ -113,63 +121,59 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def trmm_kernel(
-    A_ptr, B_ptr, alpha, M, N,
-    BLOCK_SIZE: tl.constexpr
-):
+def trmm_kernel(A_ptr, B_ptr, alpha, M: tl.constexpr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
     # Get program ID
     pid = tl.program_id(0)
     
-    # Calculate i, j from program ID
+    # Calculate which (i, j) pair this program handles
     i = pid // N
     j = pid % N
     
     # Check bounds
-    if i >= M or j >= N:
+    if i >= M:
+        return
+    if j >= N:
         return
     
     # Load initial B[i][j]
     b_idx = i * N + j
     b_val = tl.load(B_ptr + b_idx)
     
-    # Accumulate sum for k from i+1 to M-1
+    # Compute sum over k from i+1 to M-1
     sum_val = 0.0
     k_start = i + 1
     
     # Process k values in blocks
+    k_offsets = tl.arange(0, BLOCK_SIZE)
     for k_block_start in range(k_start, M, BLOCK_SIZE):
-        k_offsets = tl.arange(0, BLOCK_SIZE)
-        k_vals = k_block_start + k_offsets
-        k_mask = (k_vals < M) & (k_vals >= k_start)
+        k_indices = k_block_start + k_offsets
+        k_mask = (k_indices < M) & (k_indices >= k_start)
         
         # Load A[k][i] values
-        a_indices = k_vals * M + i
+        a_indices = k_indices * M + i
         a_vals = tl.load(A_ptr + a_indices, mask=k_mask, other=0.0)
         
         # Load B[k][j] values
-        b_indices = k_vals * N + j
+        b_indices = k_indices * N + j
         b_vals = tl.load(B_ptr + b_indices, mask=k_mask, other=0.0)
         
-        # Compute products and sum
-        products = a_vals * b_vals
-        sum_val += tl.sum(tl.where(k_mask, products, 0.0))
+        # Compute partial sum
+        partial_sum = tl.sum(a_vals * b_vals)
+        sum_val += partial_sum
     
     # Update B[i][j] = alpha * (B[i][j] + sum)
     final_val = alpha * (b_val + sum_val)
     tl.store(B_ptr + b_idx, final_val)
 
 def trmm_triton(A, B, alpha, M, N):
-    # Total number of (i, j) pairs
-    grid_size = M * N
+    # Launch one thread per (i, j) pair
+    grid = (M * N,)
     
-    # Block size for k-dimension processing
+    # Choose block size for k-loop
     BLOCK_SIZE = 32
     
-    # Launch kernel with one thread per (i, j) pair
-    trmm_kernel[(grid_size,)](
-        A, B, alpha, M, N,
-        BLOCK_SIZE=BLOCK_SIZE
+    trmm_kernel[grid](
+        A, B, alpha,
+        M, N, BLOCK_SIZE
     )
-    
-    return B
 ```

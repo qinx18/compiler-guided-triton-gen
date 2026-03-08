@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for gemver (Polybench) - attempt 3"""
+"""Correctness test for gemver (Polybench) - attempt 1"""
 import sys
 import ctypes
 import numpy as np
@@ -10,7 +10,7 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.gemver.attempt3 import gemver_triton
+    from polybench_results.llm_triton.gemver.attempt1 import gemver_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

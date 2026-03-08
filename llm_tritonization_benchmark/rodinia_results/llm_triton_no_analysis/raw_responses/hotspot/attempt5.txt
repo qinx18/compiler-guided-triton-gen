@@ -1,0 +1,233 @@
+
+## PREVIOUS ATTEMPT FAILED - NUMERICAL ERROR
+
+Your last attempt produced incorrect numerical results.
+
+**Error type**: Numerical error (values don't match)
+**Max error observed**: 1.571447e+31
+
+Please fix the numerical computation. Common causes:
+- Incorrect loop bounds or indices
+- Wrong array access patterns (row-major vs column-major)
+- Missing or incorrect operations
+- Off-by-one errors
+- Cloning input arrays instead of modifying them in-place (the test checks the original tensors)
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def hotspot_kernel(
+    power_ptr, result_ptr, temp_ptr,
+    Cap_1, Rx_1, Ry_1, Rz_1, amb_temp,
+    COLS: tl.constexpr, ROWS: tl.constexpr, TSTEPS: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr
+):
+    # Get program ID and compute block start
+    pid = tl.program_id(0)
+    block_start = pid * BLOCK_SIZE
+    
+    # Compute offsets once
+    offsets = tl.arange(0, BLOCK_SIZE)
+    current_offsets = block_start + offsets
+    
+    # Convert linear index to 2D coordinates
+    r = current_offsets // COLS
+    c = current_offsets % COLS
+    
+    # Check if we're in interior region (skip boundary)
+    interior_mask = (current_offsets < (ROWS * COLS)) & (r >= 1) & (r < ROWS - 1) & (c >= 1) & (c < COLS - 1)
+    
+    for t in range(TSTEPS):
+        # Load current temperature and power values for interior points only
+        temp_center = tl.load(temp_ptr + current_offsets, mask=interior_mask, other=0.0)
+        power_val = tl.load(power_ptr + current_offsets, mask=interior_mask, other=0.0)
+        
+        # Load neighboring temperature values for stencil
+        temp_up = tl.load(temp_ptr + current_offsets - COLS, mask=interior_mask, other=0.0)
+        temp_down = tl.load(temp_ptr + current_offsets + COLS, mask=interior_mask, other=0.0)
+        temp_left = tl.load(temp_ptr + current_offsets - 1, mask=interior_mask, other=0.0)
+        temp_right = tl.load(temp_ptr + current_offsets + 1, mask=interior_mask, other=0.0)
+        
+        # Compute 5-point stencil exactly as in C code
+        y_diff = (temp_down + temp_up - 2.0 * temp_center) * Ry_1
+        x_diff = (temp_right + temp_left - 2.0 * temp_center) * Rx_1
+        z_diff = (amb_temp - temp_center) * Rz_1
+        
+        result_val = temp_center + Cap_1 * (power_val + y_diff + x_diff + z_diff)
+        
+        # Store result for interior points only
+        tl.store(result_ptr + current_offsets, result_val, mask=interior_mask)
+        
+        # Synchronize before copying result back to temp
+        temp_updated = tl.load(result_ptr + current_offsets, mask=interior_mask, other=0.0)
+        tl.store(temp_ptr + current_offsets, temp_updated, mask=interior_mask)
+
+def hotspot_triton(power, result, temp, Cap_1, Rx_1, Ry_1, Rz_1, amb_temp, COLS, ROWS, TSTEPS):
+    # Total number of elements
+    n_elements = ROWS * COLS
+    
+    # Choose block size
+    BLOCK_SIZE = 256
+    
+    # Calculate grid size
+    grid = (triton.cdiv(n_elements, BLOCK_SIZE),)
+    
+    # Launch kernel
+    hotspot_kernel[grid](
+        power, result, temp,
+        Cap_1, Rx_1, Ry_1, Rz_1, amb_temp,
+        COLS, ROWS, TSTEPS,
+        BLOCK_SIZE
+    )
+```
+
+
+## ORIGINAL TASK:
+I have a Rodinia benchmark kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+/* Rodinia hotspot: 2D thermal stencil (interior only, skip boundary) */
+/* Simplified from gpu-rodinia/openmp/hotspot/hotspot_openmp.cpp */
+
+#define ROWS 256
+#define COLS 256
+#define TSTEPS 10
+
+float temp[ROWS][COLS];
+float power[ROWS][COLS];
+float result[ROWS][COLS];
+
+/* Precomputed thermal constants */
+float Cap_1 = 0.0002f;
+float Rx_1 = 51200.0f;
+float Ry_1 = 51200.0f;
+float Rz_1 = 320000.0f;
+float amb_temp = 80.0f;
+
+void hotspot_kernel() {
+  int t, r, c;
+#pragma scop
+  for (t = 0; t < TSTEPS; t++) {
+    /* Compute interior points using 5-point stencil */
+    for (r = 1; r < ROWS - 1; r++) {
+      for (c = 1; c < COLS - 1; c++) {
+        result[r][c] = temp[r][c] +
+          Cap_1 * (power[r][c]
+            + (temp[r + 1][c] + temp[r - 1][c] - 2.0f * temp[r][c]) * Ry_1
+            + (temp[r][c + 1] + temp[r][c - 1] - 2.0f * temp[r][c]) * Rx_1
+            + (amb_temp - temp[r][c]) * Rz_1);
+      }
+    }
+    /* Copy result back to temp for next timestep */
+    for (r = 1; r < ROWS - 1; r++) {
+      for (c = 1; c < COLS - 1; c++) {
+        temp[r][c] = result[r][c];
+      }
+    }
+  }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+/* 2D thermal stencil with timestep loop (interior only) */
+  for (t = 0; t < TSTEPS; t++) {
+    /* Compute interior points using 5-point stencil */
+    for (r = 1; r < ROWS - 1; r++) {
+      for (c = 1; c < COLS - 1; c++) {
+        result[r][c] = temp[r][c] +
+          Cap_1 * (power[r][c]
+            + (temp[r + 1][c] + temp[r - 1][c] - 2.0f * temp[r][c]) * Ry_1
+            + (temp[r][c + 1] + temp[r][c - 1] - 2.0f * temp[r][c]) * Rx_1
+            + (amb_temp - temp[r][c]) * Rz_1);
+      }
+    }
+    /* Copy result back to temp for next timestep */
+    for (r = 1; r < ROWS - 1; r++) {
+      for (c = 1; c < COLS - 1; c++) {
+        temp[r][c] = result[r][c];
+      }
+    }
+  }
+```
+
+## Array Information:
+- `power`: read-only
+- `result`: read-write
+- `temp`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `COLS` = 256
+- `ROWS` = 256
+- `TSTEPS` = 10
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `hotspot_kernel`
+2. Includes a Python wrapper function named `hotspot_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def hotspot_triton(power, result, temp, Cap_1, Rx_1, Ry_1, Rz_1, amb_temp, COLS, ROWS, TSTEPS):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 5 of 10. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

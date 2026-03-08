@@ -1,177 +1,107 @@
 
-## PREVIOUS ATTEMPT FAILED
+## PREVIOUS ATTEMPT FAILED - NUMERICAL ERROR
 
-**Error type**: unknown
-**Error message**:
-```
-  Test 1: ERROR - at 25:27:
-            j_current = j_block + j_offsets
-            j_mask = j_current < N
+Your last attempt produced incorrect numerical results.
 
-            v1_vals = tl.load(v1_ptr + j_current, mask=j_mask, other=0.0)
-            v2_vals = tl.load(v2_ptr + j_current, mask=j_mask, other=0.0)
+**Error type**: Numerical error (values don't match)
+**Max error observed**: 7.358822e+02
 
-            # Compute outer product updates for this block
-            for i_local in range(BLOCK_SIZE):
-                i_val = i_block + i_local
-                i_valid = i_val < N
-                if i_valid:
-                    u1_i = u1_vals[i_local]
-                           ^
-ValueError('Did you forget to add @triton.jit ? (`_builder` argument must be provided outside of JIT functions.)')
-  Test 2: ERROR - at 25:27:
-            j_current = j_block + j_offsets
-            j_mask = j_current < N
-
-            v1_vals = tl.load(v1_ptr + j_current, mask=j_mask, other=0.0)
-            v2_vals = tl.load(v2_ptr + j_current, mask=j_mask, other=0.0)
-
-            # Compute outer product updates for this block
-            for i_local in range(BLOCK_SIZE):
-                i_val = i_block + i_local
-                i_valid = i_val < N
-                if i_valid:
-                    u1_i = u1_vals[i_local]
-                           ^
-ValueError('Did you forget to add @triton.jit ? (`_builder` argument must be provided outside of JIT functions.)')
-  Test 3: ERROR - at 25:27:
-            j_current = j_block + j_offsets
-            j_mask = j_current < N
-
-            v1_vals = tl.load(v1_ptr + j_current, mask=j_mask, other=0.0)
-            v2_vals = tl.load(v2_ptr + j_current, mask=j_mask, other=0.0)
-
-            # Compute outer product updates for this block
-            for i_local in range(BLOCK_SIZE):
-                i_val = i_block + i_local
-                i_valid = i_val < N
-                if i_valid:
-                    u1_i = u1_vals[i_local]
-                           ^
-ValueError('Did you forget to add @triton.jit ? (`_builder` argument must be provided outside of JIT functions.)')
-Some tests FAILED!
-
-```
-
-Please fix the error.
+Please fix the numerical computation. Common causes:
+- Incorrect loop bounds or indices
+- Wrong array access patterns (row-major vs column-major)
+- Missing or incorrect operations
+- Off-by-one errors
+- Cloning input arrays instead of modifying them in-place (the test checks the original tensors)
 
 ## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
 ```python
 import triton
 import triton.language as tl
+import torch
 
 @triton.jit
-def gemver_kernel(A_ptr, u1_ptr, u2_ptr, v1_ptr, v2_ptr, w_ptr, x_ptr, y_ptr, z_ptr, alpha, beta, N, BLOCK_SIZE: tl.constexpr):
+def gemver_kernel(A_ptr, u1_ptr, u2_ptr, v1_ptr, v2_ptr, w_ptr, x_ptr, y_ptr, z_ptr, 
+                  alpha, beta, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    
+    row_start = pid * BLOCK_SIZE
+    row_offsets = tl.arange(0, BLOCK_SIZE)
+    col_offsets = tl.arange(0, BLOCK_SIZE)
+    
     # First loop: A[i][j] = A[i][j] + u1[i] * v1[j] + u2[i] * v2[j]
-    i_offsets = tl.arange(0, BLOCK_SIZE)
-    j_offsets = tl.arange(0, BLOCK_SIZE)
-    
-    for i_block in range(0, N, BLOCK_SIZE):
-        i_current = i_block + i_offsets
-        i_mask = i_current < N
-        
-        u1_vals = tl.load(u1_ptr + i_current, mask=i_mask, other=0.0)
-        u2_vals = tl.load(u2_ptr + i_current, mask=i_mask, other=0.0)
-        
-        for j_block in range(0, N, BLOCK_SIZE):
-            j_current = j_block + j_offsets
-            j_mask = j_current < N
+    for r in range(BLOCK_SIZE):
+        i = row_start + r
+        if i < N:
+            u1_val = tl.load(u1_ptr + i)
+            u2_val = tl.load(u2_ptr + i)
             
-            v1_vals = tl.load(v1_ptr + j_current, mask=j_mask, other=0.0)
-            v2_vals = tl.load(v2_ptr + j_current, mask=j_mask, other=0.0)
-            
-            # Compute outer product updates for this block
-            for i_local in range(BLOCK_SIZE):
-                i_val = i_block + i_local
-                i_valid = i_val < N
-                if i_valid:
-                    u1_i = u1_vals[i_local]
-                    u2_i = u2_vals[i_local]
-                    
-                    A_row_ptr = A_ptr + i_val * N
-                    A_vals = tl.load(A_row_ptr + j_current, mask=j_mask, other=0.0)
-                    
-                    update_vals = u1_i * v1_vals + u2_i * v2_vals
-                    new_A_vals = A_vals + update_vals
-                    
-                    tl.store(A_row_ptr + j_current, new_A_vals, mask=j_mask)
-    
+            for col_block in range(0, N, BLOCK_SIZE):
+                j_indices = col_block + col_offsets
+                j_mask = j_indices < N
+                
+                v1_vals = tl.load(v1_ptr + j_indices, mask=j_mask)
+                v2_vals = tl.load(v2_ptr + j_indices, mask=j_mask)
+                
+                a_indices = i * N + j_indices
+                a_vals = tl.load(A_ptr + a_indices, mask=j_mask)
+                
+                new_a_vals = a_vals + u1_val * v1_vals + u2_val * v2_vals
+                tl.store(A_ptr + a_indices, new_a_vals, mask=j_mask)
+
+    tl.debug_barrier()
+
     # Second loop: x[i] = x[i] + beta * A[j][i] * y[j]
-    for i_block in range(0, N, BLOCK_SIZE):
-        i_current = i_block + i_offsets
-        i_mask = i_current < N
-        
-        x_vals = tl.load(x_ptr + i_current, mask=i_mask, other=0.0)
-        
-        for j_block in range(0, N, BLOCK_SIZE):
-            j_current = j_block + j_offsets
-            j_mask = j_current < N
+    for r in range(BLOCK_SIZE):
+        i = row_start + r
+        if i < N:
+            x_val = tl.load(x_ptr + i)
             
-            y_vals = tl.load(y_ptr + j_current, mask=j_mask, other=0.0)
+            for j in range(N):
+                a_val = tl.load(A_ptr + j * N + i)
+                y_val = tl.load(y_ptr + j)
+                x_val = x_val + beta * a_val * y_val
             
-            for j_local in range(BLOCK_SIZE):
-                j_val = j_block + j_local
-                j_valid = j_val < N
-                if j_valid:
-                    y_j = y_vals[j_local]
-                    
-                    A_col_indices = j_val * N + i_current
-                    col_mask = i_mask
-                    A_col_vals = tl.load(A_ptr + A_col_indices, mask=col_mask, other=0.0)
-                    
-                    x_vals = x_vals + beta * A_col_vals * y_j
-        
-        tl.store(x_ptr + i_current, x_vals, mask=i_mask)
-    
+            tl.store(x_ptr + i, x_val)
+
+    tl.debug_barrier()
+
     # Third loop: x[i] = x[i] + z[i]
-    for i_block in range(0, N, BLOCK_SIZE):
-        i_current = i_block + i_offsets
-        i_mask = i_current < N
-        
-        x_vals = tl.load(x_ptr + i_current, mask=i_mask, other=0.0)
-        z_vals = tl.load(z_ptr + i_current, mask=i_mask, other=0.0)
-        
-        new_x_vals = x_vals + z_vals
-        
-        tl.store(x_ptr + i_current, new_x_vals, mask=i_mask)
-    
+    for r in range(BLOCK_SIZE):
+        i = row_start + r
+        if i < N:
+            x_val = tl.load(x_ptr + i)
+            z_val = tl.load(z_ptr + i)
+            tl.store(x_ptr + i, x_val + z_val)
+
+    tl.debug_barrier()
+
     # Fourth loop: w[i] = w[i] + alpha * A[i][j] * x[j]
-    for i_block in range(0, N, BLOCK_SIZE):
-        i_current = i_block + i_offsets
-        i_mask = i_current < N
-        
-        w_vals = tl.load(w_ptr + i_current, mask=i_mask, other=0.0)
-        
-        for j_block in range(0, N, BLOCK_SIZE):
-            j_current = j_block + j_offsets
-            j_mask = j_current < N
+    for r in range(BLOCK_SIZE):
+        i = row_start + r
+        if i < N:
+            w_val = tl.load(w_ptr + i)
             
-            x_vals = tl.load(x_ptr + j_current, mask=j_mask, other=0.0)
+            for col_block in range(0, N, BLOCK_SIZE):
+                j_indices = col_block + col_offsets
+                j_mask = j_indices < N
+                
+                a_indices = i * N + j_indices
+                a_vals = tl.load(A_ptr + a_indices, mask=j_mask)
+                x_vals = tl.load(x_ptr + j_indices, mask=j_mask)
+                
+                contrib = tl.sum(tl.where(j_mask, alpha * a_vals * x_vals, 0.0))
+                w_val = w_val + contrib
             
-            for i_local in range(BLOCK_SIZE):
-                i_val = i_block + i_local
-                i_valid = i_val < N
-                if i_valid:
-                    A_row_ptr = A_ptr + i_val * N
-                    A_vals = tl.load(A_row_ptr + j_current, mask=j_mask, other=0.0)
-                    
-                    w_i = w_vals[i_local]
-                    dot_product = tl.sum(alpha * A_vals * x_vals)
-                    new_w_i = w_i + dot_product
-                    
-                    w_vals = tl.where(i_local == tl.arange(0, BLOCK_SIZE), new_w_i, w_vals)
-        
-        tl.store(w_ptr + i_current, w_vals, mask=i_mask)
+            tl.store(w_ptr + i, w_val)
+
 
 def gemver_triton(A, u1, u2, v1, v2, w, x, y, z, alpha, beta, N):
     BLOCK_SIZE = 32
+    num_blocks = triton.cdiv(N, BLOCK_SIZE)
     
-    grid = (1,)
-    
-    gemver_kernel[grid](
+    gemver_kernel[(num_blocks,)](
         A, u1, u2, v1, v2, w, x, y, z,
-        alpha, beta, N,
-        BLOCK_SIZE=BLOCK_SIZE
+        alpha, beta, N, BLOCK_SIZE
     )
 ```
 
@@ -271,6 +201,14 @@ def gemver_triton(A, u1, u2, v1, v2, w, x, y, z, alpha, beta, N):
 ```
 
 ## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
 
 **NEVER use `tl.arange()` inside a for loop:**
 ```python

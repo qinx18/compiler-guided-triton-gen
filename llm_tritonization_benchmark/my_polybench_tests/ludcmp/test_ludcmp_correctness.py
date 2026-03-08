@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for ludcmp (Polybench) - attempt 2"""
+"""Correctness test for ludcmp (Polybench) - attempt 1"""
 import sys
 import ctypes
 import numpy as np
@@ -10,7 +10,7 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.ludcmp.attempt2 import ludcmp_triton
+    from polybench_results.llm_triton.ludcmp.attempt1 import ludcmp_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

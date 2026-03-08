@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for symm (Polybench) - attempt 10"""
+"""Correctness test for symm (Polybench) - attempt 1"""
 import sys
 import ctypes
 import numpy as np
@@ -10,7 +10,7 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.symm.attempt10 import symm_triton
+    from polybench_results.llm_triton.symm.attempt1 import symm_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

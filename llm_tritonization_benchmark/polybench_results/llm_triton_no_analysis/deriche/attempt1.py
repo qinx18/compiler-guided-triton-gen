@@ -3,11 +3,7 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def deriche_kernel(
-    imgIn_ptr, imgOut_ptr, y2_ptr, yy1_ptr,
-    alpha, H, W,
-    BLOCK_SIZE: tl.constexpr
-):
+def deriche_kernel(imgIn_ptr, imgOut_ptr, y2_ptr, yy1_ptr, alpha, H: tl.constexpr, W: tl.constexpr):
     # Calculate coefficients
     exp_neg_alpha = tl.exp(-alpha)
     exp_neg_2alpha = tl.exp(-2.0 * alpha)
@@ -17,11 +13,11 @@ def deriche_kernel(
     a2 = a6 = k * exp_neg_alpha * (alpha - 1.0)
     a3 = a7 = k * exp_neg_alpha * (alpha + 1.0)
     a4 = a8 = -k * exp_neg_2alpha
-    b1 = tl.exp2(-alpha)  # equivalent to pow(2.0, -alpha)
+    b1 = tl.exp2(-alpha)  # pow(2.0, -alpha)
     b2 = -exp_neg_2alpha
     c1 = c2 = 1.0
     
-    # First pass: forward scan for each row i
+    # First pass: forward scan over rows
     for i in range(W):
         ym1 = 0.0
         ym2 = 0.0
@@ -35,14 +31,15 @@ def deriche_kernel(
             ym2 = ym1
             ym1 = yy1_val
     
-    # Second pass: backward scan for each row i
+    # Second pass: backward scan over rows
     for i in range(W):
         yp1 = 0.0
         yp2 = 0.0
         xp1 = 0.0
         xp2 = 0.0
-        for j in range(H - 1, -1, -1):
-            idx = i * H + j
+        for j in range(H):
+            j_idx = H - 1 - j
+            idx = i * H + j_idx
             imgIn_val = tl.load(imgIn_ptr + idx)
             y2_val = a3 * xp1 + a4 * xp2 + b1 * yp1 + b2 * yp2
             tl.store(y2_ptr + idx, y2_val)
@@ -51,7 +48,7 @@ def deriche_kernel(
             yp2 = yp1
             yp1 = y2_val
     
-    # Third pass: combine results and store in imgOut
+    # Combine first two passes
     for i in range(W):
         for j in range(H):
             idx = i * H + j
@@ -60,7 +57,7 @@ def deriche_kernel(
             imgOut_val = c1 * (yy1_val + y2_val)
             tl.store(imgOut_ptr + idx, imgOut_val)
     
-    # Fourth pass: forward scan for each column j
+    # Third pass: forward scan over columns
     for j in range(H):
         tm1 = 0.0
         ym1 = 0.0
@@ -74,14 +71,15 @@ def deriche_kernel(
             ym2 = ym1
             ym1 = yy1_val
     
-    # Fifth pass: backward scan for each column j
+    # Fourth pass: backward scan over columns
     for j in range(H):
         tp1 = 0.0
         tp2 = 0.0
         yp1 = 0.0
         yp2 = 0.0
-        for i in range(W - 1, -1, -1):
-            idx = i * H + j
+        for i in range(W):
+            i_idx = W - 1 - i
+            idx = i_idx * H + j
             imgOut_val = tl.load(imgOut_ptr + idx)
             y2_val = a7 * tp1 + a8 * tp2 + b1 * yp1 + b2 * yp2
             tl.store(y2_ptr + idx, y2_val)
@@ -90,7 +88,7 @@ def deriche_kernel(
             yp2 = yp1
             yp1 = y2_val
     
-    # Final pass: combine final results
+    # Final combination
     for i in range(W):
         for j in range(H):
             idx = i * H + j
@@ -100,13 +98,8 @@ def deriche_kernel(
             tl.store(imgOut_ptr + idx, imgOut_val)
 
 def deriche_triton(imgIn, imgOut, y2, yy1, alpha, H, W):
-    BLOCK_SIZE = 128
-    
-    # Launch with a single block since we need sequential processing
-    grid = (1,)
-    
-    deriche_kernel[grid](
+    deriche_kernel[(1,)](
         imgIn, imgOut, y2, yy1,
-        alpha, H, W,
-        BLOCK_SIZE=BLOCK_SIZE
+        alpha,
+        H, W
     )

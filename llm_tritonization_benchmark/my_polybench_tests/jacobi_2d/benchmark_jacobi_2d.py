@@ -10,7 +10,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton.jacobi_2d.attempt10 import jacobi_2d_triton
+    from polybench_results.llm_triton.jacobi_2d.attempt1 import jacobi_2d_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

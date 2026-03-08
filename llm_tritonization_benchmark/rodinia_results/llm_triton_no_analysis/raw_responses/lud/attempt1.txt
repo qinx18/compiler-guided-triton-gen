@@ -1,0 +1,184 @@
+# LLM-Generated Triton Implementation for lud (Rodinia)
+# Generated: 2026-03-04 13:49:35
+# Model: claude-sonnet-4-20250514
+
+================================================================================
+PROMPT:
+================================================================================
+I have a Rodinia benchmark kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+/* Rodinia LUD: Unblocked LU decomposition (no pivoting) */
+/* Simplified from gpu-rodinia/openmp/lud/omp/lud_omp.c */
+
+#define N 256
+
+float A[N][N];
+
+void lud_kernel() {
+  int i, j, k;
+#pragma scop
+  for (i = 0; i < N; i++) {
+    for (j = 0; j < i; j++) {
+      for (k = 0; k < j; k++) {
+        A[i][j] -= A[i][k] * A[k][j];
+      }
+      A[i][j] /= A[j][j];
+    }
+    for (j = i; j < N; j++) {
+      for (k = 0; k < i; k++) {
+        A[i][j] -= A[i][k] * A[k][j];
+      }
+    }
+  }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+/* Unblocked LU decomposition (no pivoting) */
+  for (i = 0; i < N; i++) {
+    for (j = 0; j < i; j++) {
+      for (k = 0; k < j; k++) {
+        A[i][j] -= A[i][k] * A[k][j];
+      }
+      A[i][j] /= A[j][j];
+    }
+    for (j = i; j < N; j++) {
+      for (k = 0; k < i; k++) {
+        A[i][j] -= A[i][k] * A[k][j];
+      }
+    }
+  }
+```
+
+## Array Information:
+- `A`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `N` = 256
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `lud_kernel`
+2. Includes a Python wrapper function named `lud_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def lud_triton(A, N):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+================================================================================
+RESPONSE:
+================================================================================
+```python
+import torch
+import triton
+import triton.language as tl
+
+@triton.jit
+def lud_kernel(A_ptr, N: tl.constexpr):
+    # Get program ID
+    pid = tl.program_id(0)
+    
+    # Each program handles one row i
+    i = pid
+    
+    if i >= N:
+        return
+    
+    # First loop: for j < i (lower triangular part)
+    for j in range(i):
+        # Inner loop: for k < j
+        sum_val = 0.0
+        for k in range(j):
+            # A[i][j] -= A[i][k] * A[k][j]
+            a_ik = tl.load(A_ptr + i * N + k)
+            a_kj = tl.load(A_ptr + k * N + j)
+            sum_val += a_ik * a_kj
+        
+        # Update A[i][j]
+        a_ij = tl.load(A_ptr + i * N + j)
+        a_ij -= sum_val
+        
+        # A[i][j] /= A[j][j]
+        a_jj = tl.load(A_ptr + j * N + j)
+        a_ij /= a_jj
+        
+        tl.store(A_ptr + i * N + j, a_ij)
+    
+    # Second loop: for j >= i (upper triangular part)
+    for j in range(i, N):
+        # Inner loop: for k < i
+        sum_val = 0.0
+        for k in range(i):
+            # A[i][j] -= A[i][k] * A[k][j]
+            a_ik = tl.load(A_ptr + i * N + k)
+            a_kj = tl.load(A_ptr + k * N + j)
+            sum_val += a_ik * a_kj
+        
+        # Update A[i][j]
+        a_ij = tl.load(A_ptr + i * N + j)
+        a_ij -= sum_val
+        
+        tl.store(A_ptr + i * N + j, a_ij)
+
+def lud_triton(A, N):
+    # Launch kernel with one thread block per row
+    grid = (N,)
+    lud_kernel[grid](A, N)
+```

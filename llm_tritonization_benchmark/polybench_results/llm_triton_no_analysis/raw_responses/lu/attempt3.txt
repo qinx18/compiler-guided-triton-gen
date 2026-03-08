@@ -1,0 +1,271 @@
+
+## PREVIOUS ATTEMPT FAILED
+
+**Error type**: unknown
+**Error message**:
+```
+  Test 1: ERROR - at 52:20:
+        j_block_mask = j_block_offsets < N
+
+        if row > 0:
+            # Vectorized computation for multiple j values
+            k_offsets = tl.arange(0, 128)
+            k_mask = k_offsets < row
+
+            # For each j in this block, compute dot product
+            for j_idx in range(128):
+                j_val = j_block + j_idx
+                if j_val >= N:
+                    break
+                    ^
+unsupported AST node type: Break
+  Test 2: ERROR - at 52:20:
+        j_block_mask = j_block_offsets < N
+
+        if row > 0:
+            # Vectorized computation for multiple j values
+            k_offsets = tl.arange(0, 128)
+            k_mask = k_offsets < row
+
+            # For each j in this block, compute dot product
+            for j_idx in range(128):
+                j_val = j_block + j_idx
+                if j_val >= N:
+                    break
+                    ^
+unsupported AST node type: Break
+  Test 3: ERROR - at 52:20:
+        j_block_mask = j_block_offsets < N
+
+        if row > 0:
+            # Vectorized computation for multiple j values
+            k_offsets = tl.arange(0, 128)
+            k_mask = k_offsets < row
+
+            # For each j in this block, compute dot product
+            for j_idx in range(128):
+                j_val = j_block + j_idx
+                if j_val >= N:
+                    break
+                    ^
+unsupported AST node type: Break
+Some tests FAILED!
+
+```
+
+Please fix the error.
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def lu_kernel_row(A_ptr, N: tl.constexpr, stride: tl.constexpr, row: tl.constexpr):
+    # Process lower triangular part for this row
+    for j in range(row):
+        # Vectorized computation of dot product A[row][0:j] * A[0:j][j]
+        if j > 0:
+            k_offsets = tl.arange(0, 128)
+            k_mask = k_offsets < j
+            
+            # Load A[row][k] for k in 0:j
+            a_row_k_ptrs = A_ptr + row * stride + k_offsets
+            a_row_k = tl.load(a_row_k_ptrs, mask=k_mask, other=0.0)
+            
+            # Load A[k][j] for k in 0:j
+            a_k_j_ptrs = A_ptr + k_offsets * stride + j
+            a_k_j = tl.load(a_k_j_ptrs, mask=k_mask, other=0.0)
+            
+            # Compute dot product
+            products = a_row_k * a_k_j
+            sum_val = tl.sum(products)
+        else:
+            sum_val = 0.0
+        
+        # Update A[row][j]
+        a_row_j_ptr = A_ptr + row * stride + j
+        a_row_j = tl.load(a_row_j_ptr)
+        a_row_j -= sum_val
+        
+        # Divide by diagonal element A[j][j]
+        a_jj = tl.load(A_ptr + j * stride + j)
+        a_row_j /= a_jj
+        
+        tl.store(a_row_j_ptr, a_row_j)
+    
+    # Process upper triangular part for this row
+    j_offsets = tl.arange(0, 128)
+    j_start = row
+    j_mask = (j_start + j_offsets) < N
+    
+    for j_block in range(j_start, N, 128):
+        j_block_offsets = j_block + j_offsets
+        j_block_mask = j_block_offsets < N
+        
+        if row > 0:
+            # Vectorized computation for multiple j values
+            k_offsets = tl.arange(0, 128)
+            k_mask = k_offsets < row
+            
+            # For each j in this block, compute dot product
+            for j_idx in range(128):
+                j_val = j_block + j_idx
+                if j_val >= N:
+                    break
+                    
+                # Load A[row][k] for k in 0:row
+                a_row_k_ptrs = A_ptr + row * stride + k_offsets
+                a_row_k = tl.load(a_row_k_ptrs, mask=k_mask, other=0.0)
+                
+                # Load A[k][j_val] for k in 0:row
+                a_k_j_ptrs = A_ptr + k_offsets * stride + j_val
+                a_k_j = tl.load(a_k_j_ptrs, mask=k_mask, other=0.0)
+                
+                # Compute dot product
+                products = a_row_k * a_k_j
+                sum_val = tl.sum(products)
+                
+                # Update A[row][j_val]
+                a_row_j_ptr = A_ptr + row * stride + j_val
+                a_row_j = tl.load(a_row_j_ptr)
+                a_row_j -= sum_val
+                tl.store(a_row_j_ptr, a_row_j)
+        else:
+            # No dot product needed when row == 0
+            pass
+
+def lu_triton(A, N):
+    stride = A.stride(0)
+    
+    # Process each row sequentially (LU decomposition has dependencies)
+    for i in range(N):
+        grid = (1,)
+        lu_kernel_row[grid](
+            A,
+            N,
+            stride,
+            i
+        )
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define N 120
+
+float A[N][N];
+
+void lu_kernel() {
+  int i, j, k;
+#pragma scop
+  for (i = 0; i < N; i++) {
+    for (j = 0; j <i; j++) {
+       for (k = 0; k < j; k++) {
+          A[i][j] -= A[i][k] * A[k][j];
+       }
+        A[i][j] /= A[j][j];
+    }
+   for (j = i; j < N; j++) {
+       for (k = 0; k < i; k++) {
+          A[i][j] -= A[i][k] * A[k][j];
+       }
+    }
+  }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (i = 0; i < N; i++) {
+    for (j = 0; j <i; j++) {
+       for (k = 0; k < j; k++) {
+          A[i][j] -= A[i][k] * A[k][j];
+       }
+        A[i][j] /= A[j][j];
+    }
+   for (j = i; j < N; j++) {
+       for (k = 0; k < i; k++) {
+          A[i][j] -= A[i][k] * A[k][j];
+       }
+    }
+  }
+```
+
+
+## Array Information:
+- `A`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `N` = 120
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `lu_kernel`
+2. Includes a Python wrapper function named `lu_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def lu_triton(A, N):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 3 of 10. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

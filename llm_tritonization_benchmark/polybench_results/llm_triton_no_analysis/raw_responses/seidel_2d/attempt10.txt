@@ -4,51 +4,51 @@
 **Error type**: unknown
 **Error message**:
 ```
-  Test 1: ERROR - at 17:16:
-    block_start = pid * BLOCK_SIZE
-    offsets = tl.arange(0, BLOCK_SIZE)
+  Test 1: ERROR - at 24:12:
+        j_indices = j_start + j_offsets
 
-    # Time stepping loop
-    for t in range(TSTEPS):
-        # Process elements sequentially within each time step
-        for elem_idx in range(BLOCK_SIZE):
-            linear_idx = block_start + elem_idx
+        i_mask = i_indices < (N - 1)
+        j_mask = j_indices < (N - 1)
 
-            # Skip if out of bounds
-            if linear_idx >= (N - 2) * (N - 2):
-                continue
-                ^
-unsupported AST node type: Continue
-  Test 2: ERROR - at 17:16:
-    block_start = pid * BLOCK_SIZE
-    offsets = tl.arange(0, BLOCK_SIZE)
+        # Create 2D mask
+        mask = i_mask[:, None] & j_mask[None, :]
 
-    # Time stepping loop
-    for t in range(TSTEPS):
-        # Process elements sequentially within each time step
-        for elem_idx in range(BLOCK_SIZE):
-            linear_idx = block_start + elem_idx
+        # Load 9-point stencil values
+        stencil_sum = 0.0
+        for di in range(-1, 2):
+            for dj in range(-1, 2):
+            ^
+AssertionError('Loop-carried variable stencil_sum has initial type fp32 but is re-assigned to <[16, 16], fp32> in loop! Please make sure that the type stays consistent.')
+  Test 2: ERROR - at 24:12:
+        j_indices = j_start + j_offsets
 
-            # Skip if out of bounds
-            if linear_idx >= (N - 2) * (N - 2):
-                continue
-                ^
-unsupported AST node type: Continue
-  Test 3: ERROR - at 17:16:
-    block_start = pid * BLOCK_SIZE
-    offsets = tl.arange(0, BLOCK_SIZE)
+        i_mask = i_indices < (N - 1)
+        j_mask = j_indices < (N - 1)
 
-    # Time stepping loop
-    for t in range(TSTEPS):
-        # Process elements sequentially within each time step
-        for elem_idx in range(BLOCK_SIZE):
-            linear_idx = block_start + elem_idx
+        # Create 2D mask
+        mask = i_mask[:, None] & j_mask[None, :]
 
-            # Skip if out of bounds
-            if linear_idx >= (N - 2) * (N - 2):
-                continue
-                ^
-unsupported AST node type: Continue
+        # Load 9-point stencil values
+        stencil_sum = 0.0
+        for di in range(-1, 2):
+            for dj in range(-1, 2):
+            ^
+AssertionError('Loop-carried variable stencil_sum has initial type fp32 but is re-assigned to <[16, 16], fp32> in loop! Please make sure that the type stays consistent.')
+  Test 3: ERROR - at 24:12:
+        j_indices = j_start + j_offsets
+
+        i_mask = i_indices < (N - 1)
+        j_mask = j_indices < (N - 1)
+
+        # Create 2D mask
+        mask = i_mask[:, None] & j_mask[None, :]
+
+        # Load 9-point stencil values
+        stencil_sum = 0.0
+        for di in range(-1, 2):
+            for dj in range(-1, 2):
+            ^
+AssertionError('Loop-carried variable stencil_sum has initial type fp32 but is re-assigned to <[16, 16], fp32> in loop! Please make sure that the type stays consistent.')
 Some tests FAILED!
 
 ```
@@ -62,65 +62,49 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def seidel_2d_kernel(A_ptr, N, TSTEPS, BLOCK_SIZE: tl.constexpr):
-    # Get program ID
-    pid = tl.program_id(axis=0)
+def seidel_2d_kernel(A_ptr, N: tl.constexpr, TSTEPS: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    pid_i = tl.program_id(0)
+    pid_j = tl.program_id(1)
     
-    # Calculate starting position for this block
-    block_start = pid * BLOCK_SIZE
-    offsets = tl.arange(0, BLOCK_SIZE)
+    i_start = pid_i * BLOCK_SIZE + 1
+    j_start = pid_j * BLOCK_SIZE + 1
     
-    # Time stepping loop
+    i_offsets = tl.arange(0, BLOCK_SIZE)
+    j_offsets = tl.arange(0, BLOCK_SIZE)
+    
     for t in range(TSTEPS):
-        # Process elements sequentially within each time step
-        for elem_idx in range(BLOCK_SIZE):
-            linear_idx = block_start + elem_idx
-            
-            # Skip if out of bounds
-            if linear_idx >= (N - 2) * (N - 2):
-                continue
-            
-            # Convert linear index to 2D coordinates (for interior points)
-            i = 1 + (linear_idx // (N - 2))
-            j = 1 + (linear_idx % (N - 2))
-            
-            # Calculate 2D array index
-            center_idx = i * N + j
-            
-            # Load all 9 stencil points
-            val_top_left = tl.load(A_ptr + (i - 1) * N + (j - 1))
-            val_top = tl.load(A_ptr + (i - 1) * N + j)
-            val_top_right = tl.load(A_ptr + (i - 1) * N + (j + 1))
-            
-            val_left = tl.load(A_ptr + i * N + (j - 1))
-            val_center = tl.load(A_ptr + center_idx)
-            val_right = tl.load(A_ptr + i * N + (j + 1))
-            
-            val_bottom_left = tl.load(A_ptr + (i + 1) * N + (j - 1))
-            val_bottom = tl.load(A_ptr + (i + 1) * N + j)
-            val_bottom_right = tl.load(A_ptr + (i + 1) * N + (j + 1))
-            
-            # Compute the average
-            new_val = (val_top_left + val_top + val_top_right +
-                       val_left + val_center + val_right +
-                       val_bottom_left + val_bottom + val_bottom_right) / 9.0
-            
-            # Store the result
-            tl.store(A_ptr + center_idx, new_val)
+        i_indices = i_start + i_offsets
+        j_indices = j_start + j_offsets
+        
+        i_mask = i_indices < (N - 1)
+        j_mask = j_indices < (N - 1)
+        
+        # Create 2D mask
+        mask = i_mask[:, None] & j_mask[None, :]
+        
+        # Load 9-point stencil values
+        stencil_sum = 0.0
+        for di in range(-1, 2):
+            for dj in range(-1, 2):
+                row_idx = i_indices[:, None] + di
+                col_idx = j_indices[None, :] + dj
+                addr = row_idx * N + col_idx
+                val = tl.load(A_ptr + addr, mask=mask, other=0.0)
+                stencil_sum = stencil_sum + val
+        
+        result = stencil_sum / 9.0
+        
+        # Store result
+        store_addr = i_indices[:, None] * N + j_indices[None, :]
+        tl.store(A_ptr + store_addr, result, mask=mask)
 
 def seidel_2d_triton(A, N, TSTEPS):
-    BLOCK_SIZE = 32
+    BLOCK_SIZE = 16
     
-    # Total number of interior points
-    total_interior = (N - 2) * (N - 2)
+    grid_i = triton.cdiv(N - 2, BLOCK_SIZE)
+    grid_j = triton.cdiv(N - 2, BLOCK_SIZE)
     
-    # Calculate grid size
-    grid_size = triton.cdiv(total_interior, BLOCK_SIZE)
-    
-    # Launch kernel
-    seidel_2d_kernel[(grid_size,)](
-        A, N, TSTEPS, BLOCK_SIZE
-    )
+    seidel_2d_kernel[(grid_i, grid_j)](A, N, TSTEPS, BLOCK_SIZE)
 ```
 
 
@@ -186,6 +170,14 @@ def seidel_2d_triton(A, N, TSTEPS):
 ```
 
 ## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
 
 **NEVER use `tl.arange()` inside a for loop:**
 ```python

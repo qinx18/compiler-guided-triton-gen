@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for cholesky (Polybench) - attempt 3"""
+"""Correctness test for cholesky (Polybench) - attempt 10"""
 import sys
 import ctypes
 import numpy as np
@@ -10,7 +10,7 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.cholesky.attempt3 import cholesky_triton
+    from polybench_results.llm_triton.cholesky.attempt10 import cholesky_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

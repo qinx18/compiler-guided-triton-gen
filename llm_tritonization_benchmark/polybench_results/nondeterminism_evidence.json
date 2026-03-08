@@ -1,0 +1,378 @@
+{
+  "3mm": {
+    "na_triton_ms": 0.138102,
+    "category": "true_regression",
+    "classification": "true_regression",
+    "wa_beats_na_count": 0,
+    "total_runs": 5,
+    "runs": [
+      {
+        "run": 1,
+        "passed": true,
+        "triton_ms": 0.156136
+      },
+      {
+        "run": 2,
+        "passed": true,
+        "triton_ms": 0.235312
+      },
+      {
+        "run": 3,
+        "passed": true,
+        "triton_ms": 0.157484
+      },
+      {
+        "run": 4,
+        "passed": true,
+        "triton_ms": 0.157891
+      },
+      {
+        "run": 5,
+        "passed": true,
+        "triton_ms": 0.279555
+      }
+    ]
+  },
+  "gemm": {
+    "na_triton_ms": 0.157245,
+    "category": "pseudo_regression",
+    "classification": "nondeterminism",
+    "wa_beats_na_count": 3,
+    "total_runs": 3,
+    "runs": [
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 31.240222,
+        "triton_ms": 0.10086,
+        "code_info": "grid=(?), 1 kernel(s), vectorized",
+        "run": 1
+      },
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 2.055053,
+        "triton_ms": 0.101031,
+        "code_info": "grid=(grid_i, grid_j), 1 kernel(s), vectorized",
+        "run": 2
+      },
+      {
+        "passed": true,
+        "attempts": 2,
+        "speedup": 2.452463,
+        "triton_ms": 0.106821,
+        "code_info": "grid=(?), 1 kernel(s), vectorized",
+        "run": 3
+      }
+    ],
+    "explanation": "WA Triton is consistently faster than NA (0.157ms). The speedup regression is caused by C-reference timing variance between WA and NA benchmark runs, not by analysis quality."
+  },
+  "gemver": {
+    "na_triton_ms": 0.185684,
+    "category": "true_regression",
+    "classification": "true_regression",
+    "wa_beats_na_count": 1,
+    "total_runs": 5,
+    "runs": [
+      {
+        "run": 1,
+        "passed": true,
+        "triton_ms": 0.277644
+      },
+      {
+        "run": 2,
+        "passed": true,
+        "triton_ms": 0.177894
+      },
+      {
+        "run": 3,
+        "passed": true,
+        "triton_ms": 0.310614
+      },
+      {
+        "run": 4,
+        "passed": true,
+        "triton_ms": 0.195727
+      },
+      {
+        "run": 5,
+        "passed": true,
+        "triton_ms": 0.195876
+      }
+    ]
+  },
+  "heat_3d": {
+    "na_triton_ms": 0.800826,
+    "category": "pseudo_regression",
+    "classification": "nondeterminism",
+    "wa_beats_na_count": 3,
+    "total_runs": 5,
+    "runs": [
+      {
+        "run": 1,
+        "passed": true,
+        "triton_ms": 0.886855,
+        "code_info": "grid=(triton.cdiv(total_interior, BLOCK_SIZE), 2 kernel(s), vectorized, 1 host loop(s)"
+      },
+      {
+        "run": 2,
+        "passed": true,
+        "triton_ms": 1.233189,
+        "code_info": "grid=(triton.cdiv(total_elements, BLOCK_SIZE), 2 kernel(s), vectorized, 1 host loop(s)"
+      },
+      {
+        "run": 3,
+        "passed": true,
+        "triton_ms": 0.692803,
+        "code_info": "grid=(triton.cdiv(total_interior, BLOCK_SIZE), 2 kernel(s), vectorized, 1 host loop(s)"
+      },
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 15.481938,
+        "triton_ms": 0.598966,
+        "code_info": "grid=(triton.cdiv(interior_elements, BLOCK_SIZE), 1 kernel(s), vectorized, 1 host loop(s)",
+        "run": 4
+      },
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 12.357245,
+        "triton_ms": 0.587042,
+        "code_info": "grid=(triton.cdiv(total_interior, BLOCK_SIZE), 2 kernel(s), vectorized, 1 host loop(s)",
+        "run": 5
+      }
+    ],
+    "explanation": "WA Triton is consistently faster than NA (0.801ms). The speedup regression is caused by C-reference timing variance between WA and NA benchmark runs, not by analysis quality."
+  },
+  "ludcmp": {
+    "na_triton_ms": 10.266422,
+    "category": "pseudo_regression",
+    "classification": "nondeterminism",
+    "wa_beats_na_count": 2,
+    "total_runs": 3,
+    "runs": [
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 0.167689,
+        "triton_ms": 10.278658,
+        "code_info": "grid=(1,), 1 kernel(s)",
+        "run": 1
+      },
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 0.202528,
+        "triton_ms": 10.119639,
+        "code_info": "grid=(?), 1 kernel(s)",
+        "run": 2
+      },
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 0.138921,
+        "triton_ms": 10.225912,
+        "code_info": "grid=(1,), 1 kernel(s)",
+        "run": 3
+      }
+    ],
+    "explanation": "WA Triton is consistently faster than NA (10.266ms). The speedup regression is caused by C-reference timing variance between WA and NA benchmark runs, not by analysis quality."
+  },
+  "mvt": {
+    "na_triton_ms": 0.135164,
+    "category": "pseudo_regression",
+    "classification": "nondeterminism",
+    "wa_beats_na_count": 2,
+    "total_runs": 3,
+    "runs": [
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 1.376154,
+        "triton_ms": 0.138293,
+        "code_info": "grid=(triton.cdiv(N, 1), 1 kernel(s), vectorized",
+        "run": 1
+      },
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 4.646043,
+        "triton_ms": 0.09256,
+        "code_info": "grid=(triton.cdiv(N, 1), 1 kernel(s), vectorized",
+        "run": 2
+      },
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 5.117201,
+        "triton_ms": 0.071267,
+        "code_info": "grid=(triton.cdiv(N, 1), 1 kernel(s), vectorized",
+        "run": 3
+      }
+    ],
+    "explanation": "WA Triton is consistently faster than NA (0.135ms). The speedup regression is caused by C-reference timing variance between WA and NA benchmark runs, not by analysis quality."
+  },
+  "symm": {
+    "na_triton_ms": 0.072901,
+    "category": "true_regression",
+    "classification": "nondeterminism",
+    "wa_beats_na_count": 1,
+    "total_runs": 5,
+    "runs": [
+      {
+        "run": 1,
+        "passed": true,
+        "triton_ms": 0.110236,
+        "code_info": "grid=(triton.cdiv(N, BLOCK_SIZE_N), 1 kernel(s), vectorized"
+      },
+      {
+        "run": 2,
+        "passed": true,
+        "triton_ms": 0.110832,
+        "code_info": "grid=(N,), 1 kernel(s)"
+      },
+      {
+        "run": 3,
+        "passed": true,
+        "triton_ms": 0.226327,
+        "code_info": "grid=(1,), 1 kernel(s), vectorized"
+      },
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 5.490093,
+        "triton_ms": 0.113611,
+        "code_info": "grid=(triton.cdiv(N, BLOCK_SIZE), 1 kernel(s), vectorized",
+        "run": 4
+      },
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 5.597373,
+        "triton_ms": 0.070247,
+        "code_info": "grid=(N,), 1 kernel(s), vectorized",
+        "run": 5
+      }
+    ],
+    "explanation": "WA Triton time varies from 0.070ms to 0.226ms across 5 runs. 1/5 runs beat NA (0.073ms). Regression is LLM nondeterminism."
+  },
+  "syr2k": {
+    "na_triton_ms": 0.086249,
+    "category": "true_regression",
+    "classification": "nondeterminism",
+    "wa_beats_na_count": 4,
+    "total_runs": 5,
+    "runs": [
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 9.821141,
+        "triton_ms": 0.058751,
+        "code_info": "grid=(?), 1 kernel(s), vectorized",
+        "run": 1
+      },
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 15.745341,
+        "triton_ms": 0.057308,
+        "code_info": "grid=(N,), 1 kernel(s), vectorized",
+        "run": 2
+      },
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 7.130798,
+        "triton_ms": 0.074726,
+        "code_info": "grid=(N,), 1 kernel(s), vectorized",
+        "run": 3
+      },
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 3.173205,
+        "triton_ms": 0.092438,
+        "code_info": "grid=(N,), 1 kernel(s), vectorized",
+        "run": 4
+      },
+      {
+        "passed": true,
+        "attempts": 6,
+        "speedup": 6.482337,
+        "triton_ms": 0.081439,
+        "code_info": "grid=(N,), 1 kernel(s), vectorized",
+        "run": 5
+      }
+    ],
+    "explanation": "WA Triton time varies from 0.057ms to 0.092ms across 5 runs. 4/5 runs beat NA (0.086ms). Regression is LLM nondeterminism."
+  },
+  "syrk": {
+    "na_triton_ms": 0.088665,
+    "category": "pseudo_regression",
+    "classification": "nondeterminism",
+    "wa_beats_na_count": 2,
+    "total_runs": 3,
+    "runs": [
+      {
+        "passed": true,
+        "attempts": 4,
+        "speedup": 1.422531,
+        "triton_ms": 0.147123,
+        "code_info": "grid=(?), 1 kernel(s), vectorized",
+        "run": 1
+      },
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 3.111764,
+        "triton_ms": 0.080236,
+        "code_info": "grid=(N,), 1 kernel(s), vectorized",
+        "run": 2
+      },
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 6.230022,
+        "triton_ms": 0.08096,
+        "code_info": "grid=(triton.cdiv(N, BLOCK_I), 1 kernel(s), vectorized",
+        "run": 3
+      }
+    ],
+    "explanation": "WA Triton is consistently faster than NA (0.089ms). The speedup regression is caused by C-reference timing variance between WA and NA benchmark runs, not by analysis quality."
+  },
+  "trmm": {
+    "na_triton_ms": 0.071344,
+    "category": "pseudo_regression",
+    "classification": "nondeterminism",
+    "wa_beats_na_count": 1,
+    "total_runs": 3,
+    "runs": [
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 6.868533,
+        "triton_ms": 0.110785,
+        "code_info": "grid=(?), 1 kernel(s), vectorized",
+        "run": 1
+      },
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 2.677147,
+        "triton_ms": 0.111905,
+        "code_info": "grid=(?), 1 kernel(s), vectorized",
+        "run": 2
+      },
+      {
+        "passed": true,
+        "attempts": 1,
+        "speedup": 10.388974,
+        "triton_ms": 0.066384,
+        "code_info": "grid=(?), 1 kernel(s), vectorized",
+        "run": 3
+      }
+    ],
+    "explanation": "WA Triton is consistently faster than NA (0.071ms). The speedup regression is caused by C-reference timing variance between WA and NA benchmark runs, not by analysis quality."
+  }
+}

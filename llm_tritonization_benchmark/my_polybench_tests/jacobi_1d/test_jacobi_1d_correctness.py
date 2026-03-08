@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for jacobi_1d (Polybench) - attempt 10"""
+"""Correctness test for jacobi_1d (Polybench) - attempt 4"""
 import sys
 import ctypes
 import numpy as np
@@ -10,7 +10,7 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.jacobi_1d.attempt10 import jacobi_1d_triton
+    from polybench_results.llm_triton.jacobi_1d.attempt4 import jacobi_1d_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

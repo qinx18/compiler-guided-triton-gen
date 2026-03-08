@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for nussinov (Polybench) - attempt 10"""
+"""Correctness test for nussinov (Polybench) - attempt 5"""
 import sys
 import ctypes
 import numpy as np
@@ -10,7 +10,7 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.nussinov.attempt10 import nussinov_triton
+    from polybench_results.llm_triton.nussinov.attempt5 import nussinov_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

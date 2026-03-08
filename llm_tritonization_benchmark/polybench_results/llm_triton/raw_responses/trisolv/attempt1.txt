@@ -1,5 +1,5 @@
 # LLM-Generated Triton Implementation for trisolv (Polybench)
-# Generated: 2026-03-02 03:40:15
+# Generated: 2026-03-06 06:32:58
 # Model: claude-sonnet-4-20250514
 
 ================================================================================
@@ -46,29 +46,10 @@ for (i = 0; i < N; i++)
 ## WAR (Write-After-Read) Dependencies
 
 **Note**: This kernel has WAR (Write-After-Read) dependencies.
-If you split the computation into **separate Triton kernels** launched sequentially, kernel launch barriers handle these dependencies naturally — no cloning needed.
-Cloning is only needed if reads and writes to the same array happen **within a single kernel**.
 
 **Arrays with WAR dependencies**: x
-- Read x[(j)] may conflict with Write x[(i)] from different iteration
 
-**If using a single kernel**: Create read-only copies before the parallel region:
-```python
-x_copy = x.clone()  # Read from copy, write to original
-```
-**If using separate kernels**: No cloning needed — launch one kernel per phase.
-
-
-## Parallelization Analysis
-
-**Loop dimensions**: ['i', 'j']
-**Triangular bounds**: j < i
-
-- Parallelize `j`, sequential `i`: VALID
-
-- Parallelize `i`, sequential `j`: VALID
-
-**Both `i` and `j` are freely parallelizable.** Use a 2D grid to parallelize both simultaneously for best GPU occupancy.
+This kernel is **inherently sequential** — no dimension can be safely parallelized. Use `grid=(1,)` with sequential loops. No cloning needed since execution is sequential.
 
 
 ## Array Information:
@@ -97,6 +78,14 @@ def trisolv_triton(L, b, x, N):
 ```
 
 ## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
 
 **NEVER use `tl.arange()` inside a for loop:**
 ```python
@@ -140,30 +129,29 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def trisolv_kernel(L_ptr, b_ptr, x_ptr, N, L_stride):
-    i = tl.program_id(0)
-    
-    if i >= N:
-        return
-    
-    # x[i] = b[i]
-    b_val = tl.load(b_ptr + i)
-    x_val = b_val
-    
-    # for (j = 0; j < i; j++)
-    #   x[i] -= L[i][j] * x[j];
-    for j in range(i):
-        L_ij = tl.load(L_ptr + i * L_stride + j)
-        x_j = tl.load(x_ptr + j)
-        x_val -= L_ij * x_j
-    
-    # x[i] = x[i] / L[i][i];
-    L_ii = tl.load(L_ptr + i * L_stride + i)
-    x_val = x_val / L_ii
-    
-    tl.store(x_ptr + i, x_val)
+def trisolv_kernel(L_ptr, b_ptr, x_ptr, N: tl.constexpr):
+    # Sequential implementation - no parallelization due to WAR dependencies
+    for i in range(N):
+        # x[i] = b[i]
+        b_val = tl.load(b_ptr + i)
+        x_val = b_val
+        
+        # for j in range(i): x[i] -= L[i][j] * x[j]
+        for j in range(i):
+            l_idx = i * N + j
+            l_val = tl.load(L_ptr + l_idx)
+            x_j = tl.load(x_ptr + j)
+            x_val = x_val - l_val * x_j
+        
+        # x[i] = x[i] / L[i][i]
+        l_diag_idx = i * N + i
+        l_diag = tl.load(L_ptr + l_diag_idx)
+        x_val = x_val / l_diag
+        
+        # Store result
+        tl.store(x_ptr + i, x_val)
 
 def trisolv_triton(L, b, x, N):
-    grid = (N,)
-    trisolv_kernel[grid](L, b, x, N, L.stride(0))
+    grid = (1,)
+    trisolv_kernel[grid](L, b, x, N)
 ```

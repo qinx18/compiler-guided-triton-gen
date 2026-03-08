@@ -1,5 +1,5 @@
 # LLM-Generated Triton Implementation for 3mm (Polybench)
-# Generated: 2026-03-02 03:01:11
+# Generated: 2026-03-06 15:43:39
 # Model: claude-sonnet-4-20250514
 
 ================================================================================
@@ -91,9 +91,15 @@ void k3mm_kernel() {
 
 - Parallelize `j`, sequential `i`: VALID
 
-- Parallelize `i`, sequential `j`: VALID
+- Parallelize `i`, sequential `j`: INVALID
+  - Cross-phase dependency: different loop bodies under `i` read/write the same arrays (e.g., phase 1 writes B, phase 2 reads B)
 
-**Both `i` and `j` are freely parallelizable.** Use a 2D grid to parallelize both simultaneously for best GPU occupancy.
+**IMPORTANT**: `i` is INVALID across phases, but **within each separate kernel**, both dimensions are safe to parallelize. **Split into separate Triton kernels** per phase, launched sequentially from Python. Within each kernel, parallelize **BOTH** dimensions using a 2D grid — kernel launch barriers resolve the cross-phase dependencies.
+
+**Matrix Multiply Pattern**: Use `tl.dot()` for the inner reduction:
+- Grid: `(cdiv(M, BLOCK_M), cdiv(N, BLOCK_N))` per phase kernel
+- Each CTA: load A[BLOCK_M, BLOCK_K] and B[BLOCK_K, BLOCK_N] tiles, accumulate `acc += tl.dot(a_tile, b_tile)` over k-blocks
+- BLOCK_M=BLOCK_N=BLOCK_K=16 (minimum for tl.dot)
 
 
 ## Array Information:
@@ -130,6 +136,14 @@ def k3mm_triton(A, B, C, D, E, F, G, NI, NJ, NK, NL, NM):
 ```
 
 ## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
 
 **NEVER use `tl.arange()` inside a for loop:**
 ```python
@@ -170,127 +184,138 @@ RESPONSE:
 ```python
 import triton
 import triton.language as tl
-import torch
 
 @triton.jit
-def k3mm_kernel(A, B, C, D, E, F, G, NI, NJ, NK, NL, NM, 
-                BLOCK_I: tl.constexpr, BLOCK_J: tl.constexpr, BLOCK_L: tl.constexpr, BLOCK_K: tl.constexpr):
-    # Get program IDs for different computations
-    pid_i = tl.program_id(0)
-    pid_j = tl.program_id(1)
-    pid_computation = tl.program_id(2)
+def k3mm_kernel_1(A_ptr, B_ptr, E_ptr, NI: tl.constexpr, NJ: tl.constexpr, NK: tl.constexpr, 
+                  BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr):
+    pid_m = tl.program_id(0)
+    pid_n = tl.program_id(1)
     
-    i_offsets = pid_i * BLOCK_I + tl.arange(0, BLOCK_I)
-    j_offsets = pid_j * BLOCK_J + tl.arange(0, BLOCK_J)
-    l_offsets = pid_j * BLOCK_L + tl.arange(0, BLOCK_L)
+    m_start = pid_m * BLOCK_M
+    n_start = pid_n * BLOCK_N
+    
+    m_offsets = tl.arange(0, BLOCK_M)
+    n_offsets = tl.arange(0, BLOCK_N)
     k_offsets = tl.arange(0, BLOCK_K)
     
-    if pid_computation == 0:
-        # E := A*B
-        i_mask = i_offsets < NI
-        j_mask = j_offsets < NJ
-        
-        acc = tl.zeros((BLOCK_I, BLOCK_J), dtype=tl.float32)
-        
-        for k_start in range(0, NK, BLOCK_K):
-            k_current = k_start + k_offsets
-            k_mask = k_current < NK
-            
-            # Load A[i, k]
-            a_ptrs = A + i_offsets[:, None] * NK + k_current[None, :]
-            a_vals = tl.load(a_ptrs, mask=i_mask[:, None] & k_mask[None, :], other=0.0)
-            
-            # Load B[k, j]
-            b_ptrs = B + k_current[:, None] * NJ + j_offsets[None, :]
-            b_vals = tl.load(b_ptrs, mask=k_mask[:, None] & j_mask[None, :], other=0.0)
-            
-            # Accumulate
-            acc += tl.dot(a_vals, b_vals)
-        
-        # Store E[i, j]
-        e_ptrs = E + i_offsets[:, None] * NJ + j_offsets[None, :]
-        tl.store(e_ptrs, acc, mask=i_mask[:, None] & j_mask[None, :])
+    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
     
-    elif pid_computation == 1:
-        # F := C*D (reuse i,j for NJ,NL dimensions)
-        i_mask = i_offsets < NJ
-        l_mask = l_offsets < NL
+    for k_start in range(0, NK, BLOCK_K):
+        m_indices = m_start + m_offsets
+        k_indices = k_start + k_offsets
+        n_indices = n_start + n_offsets
         
-        acc = tl.zeros((BLOCK_I, BLOCK_L), dtype=tl.float32)
+        m_mask = m_indices < NI
+        k_mask = k_indices < NK
+        n_mask = n_indices < NJ
         
-        for k_start in range(0, NM, BLOCK_K):
-            k_current = k_start + k_offsets
-            k_mask = k_current < NM
-            
-            # Load C[i, k]
-            c_ptrs = C + i_offsets[:, None] * NM + k_current[None, :]
-            c_vals = tl.load(c_ptrs, mask=i_mask[:, None] & k_mask[None, :], other=0.0)
-            
-            # Load D[k, j] (j represents l dimension here)
-            d_ptrs = D + k_current[:, None] * NL + l_offsets[None, :]
-            d_vals = tl.load(d_ptrs, mask=k_mask[:, None] & l_mask[None, :], other=0.0)
-            
-            # Accumulate
-            acc += tl.dot(c_vals, d_vals)
+        a_ptrs = A_ptr + m_indices[:, None] * NK + k_indices[None, :]
+        a_mask = m_mask[:, None] & k_mask[None, :]
+        a = tl.load(a_ptrs, mask=a_mask, other=0.0)
         
-        # Store F[i, l]
-        f_ptrs = F + i_offsets[:, None] * NL + l_offsets[None, :]
-        tl.store(f_ptrs, acc, mask=i_mask[:, None] & l_mask[None, :])
+        b_ptrs = B_ptr + k_indices[:, None] * NJ + n_indices[None, :]
+        b_mask = k_mask[:, None] & n_mask[None, :]
+        b = tl.load(b_ptrs, mask=b_mask, other=0.0)
+        
+        acc += tl.dot(a, b)
     
-    else:  # pid_computation == 2
-        # G := E*F
-        i_mask = i_offsets < NI
-        l_mask = l_offsets < NL
+    m_indices = m_start + m_offsets
+    n_indices = n_start + n_offsets
+    e_ptrs = E_ptr + m_indices[:, None] * NJ + n_indices[None, :]
+    e_mask = (m_indices < NI)[:, None] & (n_indices < NJ)[None, :]
+    tl.store(e_ptrs, acc, mask=e_mask)
+
+@triton.jit
+def k3mm_kernel_2(C_ptr, D_ptr, F_ptr, NJ: tl.constexpr, NL: tl.constexpr, NM: tl.constexpr,
+                  BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr):
+    pid_m = tl.program_id(0)
+    pid_n = tl.program_id(1)
+    
+    m_start = pid_m * BLOCK_M
+    n_start = pid_n * BLOCK_N
+    
+    m_offsets = tl.arange(0, BLOCK_M)
+    n_offsets = tl.arange(0, BLOCK_N)
+    k_offsets = tl.arange(0, BLOCK_K)
+    
+    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+    
+    for k_start in range(0, NM, BLOCK_K):
+        m_indices = m_start + m_offsets
+        k_indices = k_start + k_offsets
+        n_indices = n_start + n_offsets
         
-        acc = tl.zeros((BLOCK_I, BLOCK_L), dtype=tl.float32)
+        m_mask = m_indices < NJ
+        k_mask = k_indices < NM
+        n_mask = n_indices < NL
         
-        for k_start in range(0, NJ, BLOCK_K):
-            k_current = k_start + k_offsets
-            k_mask = k_current < NJ
-            
-            # Load E[i, k]
-            e_ptrs = E + i_offsets[:, None] * NJ + k_current[None, :]
-            e_vals = tl.load(e_ptrs, mask=i_mask[:, None] & k_mask[None, :], other=0.0)
-            
-            # Load F[k, l]
-            f_ptrs = F + k_current[:, None] * NL + l_offsets[None, :]
-            f_vals = tl.load(f_ptrs, mask=k_mask[:, None] & l_mask[None, :], other=0.0)
-            
-            # Accumulate
-            acc += tl.dot(e_vals, f_vals)
+        c_ptrs = C_ptr + m_indices[:, None] * NM + k_indices[None, :]
+        c_mask = m_mask[:, None] & k_mask[None, :]
+        c = tl.load(c_ptrs, mask=c_mask, other=0.0)
         
-        # Store G[i, l]
-        g_ptrs = G + i_offsets[:, None] * NL + l_offsets[None, :]
-        tl.store(g_ptrs, acc, mask=i_mask[:, None] & l_mask[None, :])
+        d_ptrs = D_ptr + k_indices[:, None] * NL + n_indices[None, :]
+        d_mask = k_mask[:, None] & n_mask[None, :]
+        d = tl.load(d_ptrs, mask=d_mask, other=0.0)
+        
+        acc += tl.dot(c, d)
+    
+    m_indices = m_start + m_offsets
+    n_indices = n_start + n_offsets
+    f_ptrs = F_ptr + m_indices[:, None] * NL + n_indices[None, :]
+    f_mask = (m_indices < NJ)[:, None] & (n_indices < NL)[None, :]
+    tl.store(f_ptrs, acc, mask=f_mask)
+
+@triton.jit
+def k3mm_kernel_3(E_ptr, F_ptr, G_ptr, NI: tl.constexpr, NL: tl.constexpr, NJ: tl.constexpr,
+                  BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr):
+    pid_m = tl.program_id(0)
+    pid_n = tl.program_id(1)
+    
+    m_start = pid_m * BLOCK_M
+    n_start = pid_n * BLOCK_N
+    
+    m_offsets = tl.arange(0, BLOCK_M)
+    n_offsets = tl.arange(0, BLOCK_N)
+    k_offsets = tl.arange(0, BLOCK_K)
+    
+    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+    
+    for k_start in range(0, NJ, BLOCK_K):
+        m_indices = m_start + m_offsets
+        k_indices = k_start + k_offsets
+        n_indices = n_start + n_offsets
+        
+        m_mask = m_indices < NI
+        k_mask = k_indices < NJ
+        n_mask = n_indices < NL
+        
+        e_ptrs = E_ptr + m_indices[:, None] * NJ + k_indices[None, :]
+        e_mask = m_mask[:, None] & k_mask[None, :]
+        e = tl.load(e_ptrs, mask=e_mask, other=0.0)
+        
+        f_ptrs = F_ptr + k_indices[:, None] * NL + n_indices[None, :]
+        f_mask = k_mask[:, None] & n_mask[None, :]
+        f = tl.load(f_ptrs, mask=f_mask, other=0.0)
+        
+        acc += tl.dot(e, f)
+    
+    m_indices = m_start + m_offsets
+    n_indices = n_start + n_offsets
+    g_ptrs = G_ptr + m_indices[:, None] * NL + n_indices[None, :]
+    g_mask = (m_indices < NI)[:, None] & (n_indices < NL)[None, :]
+    tl.store(g_ptrs, acc, mask=g_mask)
 
 def k3mm_triton(A, B, C, D, E, F, G, NI, NJ, NK, NL, NM):
-    BLOCK_I = 16
-    BLOCK_J = 16  
-    BLOCK_L = 16
-    BLOCK_K = 32
+    BLOCK_M = 16
+    BLOCK_N = 16
+    BLOCK_K = 16
     
-    # Launch three separate computations
-    # Computation 0: E := A*B (NI x NJ)
-    grid_i = triton.cdiv(NI, BLOCK_I)
-    grid_j = triton.cdiv(NJ, BLOCK_J)
-    k3mm_kernel[(grid_i, grid_j, 1)](
-        A, B, C, D, E, F, G, NI, NJ, NK, NL, NM,
-        BLOCK_I=BLOCK_I, BLOCK_J=BLOCK_J, BLOCK_L=BLOCK_L, BLOCK_K=BLOCK_K
-    )
+    grid_1 = (triton.cdiv(NI, BLOCK_M), triton.cdiv(NJ, BLOCK_N))
+    k3mm_kernel_1[grid_1](A, B, E, NI, NJ, NK, BLOCK_M, BLOCK_N, BLOCK_K)
     
-    # Computation 1: F := C*D (NJ x NL)
-    grid_i = triton.cdiv(NJ, BLOCK_I)
-    grid_l = triton.cdiv(NL, BLOCK_L)
-    k3mm_kernel[(grid_i, grid_l, 1)](
-        A, B, C, D, E, F, G, NI, NJ, NK, NL, NM,
-        BLOCK_I=BLOCK_I, BLOCK_J=BLOCK_J, BLOCK_L=BLOCK_L, BLOCK_K=BLOCK_K
-    )
+    grid_2 = (triton.cdiv(NJ, BLOCK_M), triton.cdiv(NL, BLOCK_N))
+    k3mm_kernel_2[grid_2](C, D, F, NJ, NL, NM, BLOCK_M, BLOCK_N, BLOCK_K)
     
-    # Computation 2: G := E*F (NI x NL)
-    grid_i = triton.cdiv(NI, BLOCK_I)
-    grid_l = triton.cdiv(NL, BLOCK_L)
-    k3mm_kernel[(grid_i, grid_l, 1)](
-        A, B, C, D, E, F, G, NI, NJ, NK, NL, NM,
-        BLOCK_I=BLOCK_I, BLOCK_J=BLOCK_J, BLOCK_L=BLOCK_L, BLOCK_K=BLOCK_K
-    )
+    grid_3 = (triton.cdiv(NI, BLOCK_M), triton.cdiv(NL, BLOCK_N))
+    k3mm_kernel_3[grid_3](E, F, G, NI, NL, NJ, BLOCK_M, BLOCK_N, BLOCK_K)
 ```

@@ -3,51 +3,56 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def bicg_kernel(A_ptr, p_ptr, q_ptr, r_ptr, s_ptr, M, N, A_stride_0, A_stride_1):
-    # Initialize s[i] = 0 for all i in [0, M)
-    s_offsets = tl.arange(0, 128)
-    s_mask = s_offsets < M
-    tl.store(s_ptr + s_offsets, 0.0, mask=s_mask)
+def bicg_kernel(A_ptr, p_ptr, q_ptr, r_ptr, s_ptr, M: tl.constexpr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    # Initialize s[i] = 0 for all i < M
+    s_offsets = tl.arange(0, BLOCK_SIZE)
+    for s_block_start in range(0, M, BLOCK_SIZE):
+        s_current_offsets = s_block_start + s_offsets
+        s_mask = s_current_offsets < M
+        tl.store(s_ptr + s_current_offsets, 0.0, mask=s_mask)
     
-    # Main computation loop over i (rows of A)
+    # Main nested loops
     for i in range(N):
-        # Load r[i]
+        # q[i] = 0.0
+        tl.store(q_ptr + i, 0.0)
+        
+        # Load r[i] once for this iteration
         r_i = tl.load(r_ptr + i)
         
-        # Initialize q[i] = 0
-        q_i = 0.0
+        # Process matrix row A[i] in blocks
+        j_offsets = tl.arange(0, BLOCK_SIZE)
+        q_i_acc = 0.0
         
-        # Process columns in blocks
-        j_offsets = tl.arange(0, 128)
-        for j_start in range(0, M, 128):
-            j_current = j_start + j_offsets
-            j_mask = j_current < M
+        for j_block_start in range(0, M, BLOCK_SIZE):
+            j_current_offsets = j_block_start + j_offsets
+            j_mask = j_current_offsets < M
             
-            # Load A[i][j] values
-            A_ptrs = A_ptr + i * A_stride_0 + j_current * A_stride_1
-            A_vals = tl.load(A_ptrs, mask=j_mask)
+            # Load A[i][j] values for current block
+            A_indices = i * M + j_current_offsets
+            A_vals = tl.load(A_ptr + A_indices, mask=j_mask, other=0.0)
             
-            # Load p[j] values
-            p_vals = tl.load(p_ptr + j_current, mask=j_mask)
+            # Load p[j] values for current block
+            p_vals = tl.load(p_ptr + j_current_offsets, mask=j_mask, other=0.0)
             
             # Load current s[j] values
-            s_vals = tl.load(s_ptr + j_current, mask=j_mask)
+            s_vals = tl.load(s_ptr + j_current_offsets, mask=j_mask, other=0.0)
             
             # Update s[j] = s[j] + r[i] * A[i][j]
             s_new = s_vals + r_i * A_vals
-            tl.store(s_ptr + j_current, s_new, mask=j_mask)
+            tl.store(s_ptr + j_current_offsets, s_new, mask=j_mask)
             
             # Accumulate q[i] += A[i][j] * p[j]
-            q_contrib = A_vals * p_vals
-            q_i += tl.sum(tl.where(j_mask, q_contrib, 0.0))
+            q_i_acc += tl.sum(A_vals * p_vals, axis=0)
         
-        # Store final q[i]
-        tl.store(q_ptr + i, q_i)
+        # Store final q[i] value
+        q_i_current = tl.load(q_ptr + i)
+        tl.store(q_ptr + i, q_i_current + q_i_acc)
 
 def bicg_triton(A, p, q, r, s, M, N):
-    # Launch kernel with single program
-    grid = (1,)
-    bicg_kernel[grid](
-        A, p, q, r, s, M, N,
-        A.stride(0), A.stride(1)
+    BLOCK_SIZE = 64
+    
+    # Launch kernel with single program instance
+    bicg_kernel[(1,)](
+        A, p, q, r, s, 
+        M=M, N=N, BLOCK_SIZE=BLOCK_SIZE
     )

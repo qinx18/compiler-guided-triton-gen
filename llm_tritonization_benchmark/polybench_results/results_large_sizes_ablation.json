@@ -1,0 +1,47 @@
+{
+  "3mm": {
+    "scale_factor": 8,
+    "wa_small_triton_ms": 0.171269,
+    "na_small_triton_ms": 0.138102,
+    "winner": "NA",
+    "wa_large_triton_ms": 0.2037049736827612,
+    "na_large_triton_ms": 0.08911541663110256,
+    "large_wa_na_ratio": 2.2858555947284347
+  },
+  "gemver": {
+    "scale_factor": 8,
+    "wa_small_triton_ms": 0.275835,
+    "na_small_triton_ms": 0.185684,
+    "winner": "NA",
+    "wa_large_triton_ms": 0.07297517731785774,
+    "na_large_triton_ms": 0.06410717032849789,
+    "large_wa_na_ratio": 1.1383309689683452
+  },
+  "gemm": {
+    "scale_factor": 8,
+    "wa_small_triton_ms": 0.079134,
+    "na_small_triton_ms": 0.157245,
+    "winner": "WA",
+    "wa_large_triton_ms": 0.20904019474983215,
+    "na_large_triton_ms": 0.8671283721923828,
+    "large_wa_na_ratio": 0.24107179681055815
+  },
+  "mvt": {
+    "scale_factor": 8,
+    "wa_small_triton_ms": 0.118261,
+    "na_small_triton_ms": 0.135164,
+    "winner": "NA",
+    "wa_large_triton_ms": 0.08289003744721413,
+    "na_large_triton_ms": 0.0437865499407053,
+    "large_wa_na_ratio": 1.8930479236080906
+  },
+  "symm": {
+    "scale_factor": 8,
+    "wa_small_triton_ms": 0.083768,
+    "na_small_triton_ms": 0.072901,
+    "winner": "WA",
+    "wa_large_triton_ms": 4.540029540657997,
+    "na_large_triton_ms": 6.971517205238342,
+    "large_wa_na_ratio": 0.6512254659927763
+  }
+}

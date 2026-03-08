@@ -1,38 +1,17 @@
 
-## PREVIOUS ATTEMPT FAILED
+## PREVIOUS ATTEMPT FAILED - NUMERICAL ERROR
 
-**Error type**: unknown
-**Error message**:
-```
-  Test 1: ERROR - at 6:16:
-def trisolv_kernel(L_ptr, b_ptr, x_ptr, N, L_stride):
-    # This is a triangular solver - inherently sequential
-    # We'll process one row at a time in a single thread block
+Your last attempt produced incorrect numerical results.
 
-    # Initialize x with b values
-    i_offsets = tl.arange(0, N)
-                ^
-  Test 2: ERROR - at 6:16:
-def trisolv_kernel(L_ptr, b_ptr, x_ptr, N, L_stride):
-    # This is a triangular solver - inherently sequential
-    # We'll process one row at a time in a single thread block
+**Error type**: Numerical error (values don't match)
+**Max error observed**: 1.321801e+12
 
-    # Initialize x with b values
-    i_offsets = tl.arange(0, N)
-                ^
-  Test 3: ERROR - at 6:16:
-def trisolv_kernel(L_ptr, b_ptr, x_ptr, N, L_stride):
-    # This is a triangular solver - inherently sequential
-    # We'll process one row at a time in a single thread block
-
-    # Initialize x with b values
-    i_offsets = tl.arange(0, N)
-                ^
-Some tests FAILED!
-
-```
-
-Please fix the error.
+Please fix the numerical computation. Common causes:
+- Incorrect loop bounds or indices
+- Wrong array access patterns (row-major vs column-major)
+- Missing or incorrect operations
+- Off-by-one errors
+- Cloning input arrays instead of modifying them in-place (the test checks the original tensors)
 
 ## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
 ```python
@@ -41,58 +20,38 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def trisolv_kernel(L_ptr, b_ptr, x_ptr, N, L_stride):
-    # This is a triangular solver - inherently sequential
-    # We'll process one row at a time in a single thread block
+def trisolv_kernel(L_ptr, b_ptr, x_ptr, N: tl.constexpr, stride_L: tl.constexpr):
+    # Each program handles one row i
+    i = tl.program_id(0)
     
-    # Initialize x with b values
-    i_offsets = tl.arange(0, N)
-    i_mask = i_offsets < N
+    if i >= N:
+        return
     
-    # Load b into x
-    b_vals = tl.load(b_ptr + i_offsets, mask=i_mask)
-    tl.store(x_ptr + i_offsets, b_vals, mask=i_mask)
+    # Initialize x[i] = b[i]
+    b_val = tl.load(b_ptr + i)
+    x_val = b_val
     
-    # Process each row sequentially
-    for i in range(N):
-        # Load current x[i] value
-        x_i = tl.load(x_ptr + i)
-        
-        # Compute the dot product for row i with previous x values
-        if i > 0:
-            j_offsets = tl.arange(0, N)
-            j_mask = j_offsets < i
-            
-            # Load L[i, 0:i]
-            L_row_ptr = L_ptr + i * L_stride
-            L_vals = tl.load(L_row_ptr + j_offsets, mask=j_mask, other=0.0)
-            
-            # Load x[0:i]
-            x_vals = tl.load(x_ptr + j_offsets, mask=j_mask, other=0.0)
-            
-            # Compute dot product
-            products = L_vals * x_vals
-            dot_product = tl.sum(products)
-            
-            # Update x[i]
-            x_i = x_i - dot_product
-        
-        # Divide by diagonal element L[i][i]
-        L_diag = tl.load(L_ptr + i * L_stride + i)
-        x_i = x_i / L_diag
-        
-        # Store back x[i]
-        tl.store(x_ptr + i, x_i)
+    # Compute sum of L[i][j] * x[j] for j < i
+    for j in range(i):
+        L_ij = tl.load(L_ptr + i * stride_L + j)
+        x_j = tl.load(x_ptr + j)
+        x_val = x_val - L_ij * x_j
+    
+    # Divide by diagonal element L[i][i]
+    L_ii = tl.load(L_ptr + i * stride_L + i)
+    x_val = x_val / L_ii
+    
+    # Store result
+    tl.store(x_ptr + i, x_val)
 
 def trisolv_triton(L, b, x, N):
-    # Copy b to x initially
-    x.copy_(b)
-    
-    # Launch kernel with single thread block since this is sequential
-    grid = (1,)
+    # Launch kernel with one thread per row
+    grid = (N,)
     
     trisolv_kernel[grid](
-        L, b, x, N, L.stride(0)
+        L, b, x, 
+        N=N,
+        stride_L=L.stride(0)
     )
 ```
 
@@ -163,6 +122,14 @@ def trisolv_triton(L, b, x, N):
 ```
 
 ## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
 
 **NEVER use `tl.arange()` inside a for loop:**
 ```python

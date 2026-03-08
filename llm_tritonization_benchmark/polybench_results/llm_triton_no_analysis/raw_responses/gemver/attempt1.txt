@@ -1,5 +1,5 @@
 # LLM-Generated Triton Implementation for gemver (Polybench)
-# Generated: 2026-03-02 03:11:15
+# Generated: 2026-03-05 05:24:40
 # Model: claude-sonnet-4-20250514
 
 ================================================================================
@@ -100,6 +100,14 @@ def gemver_triton(A, u1, u2, v1, v2, w, x, y, z, alpha, beta, N):
 
 ## CRITICAL: Triton Compilation Rules
 
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
 **NEVER use `tl.arange()` inside a for loop:**
 ```python
 # WRONG
@@ -139,119 +147,131 @@ RESPONSE:
 ```python
 import triton
 import triton.language as tl
+import torch
 
 @triton.jit
-def gemver_kernel(A_ptr, u1_ptr, u2_ptr, v1_ptr, v2_ptr, w_ptr, x_ptr, y_ptr, z_ptr, alpha, beta, N, BLOCK_SIZE: tl.constexpr):
+def gemver_kernel(A_ptr, u1_ptr, u2_ptr, v1_ptr, v2_ptr, w_ptr, x_ptr, y_ptr, z_ptr, 
+                  alpha, beta, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    # Get program ID
+    pid = tl.program_id(0)
+    
+    # Calculate which row this program handles
+    row_start = pid * BLOCK_SIZE
+    row_offsets = tl.arange(0, BLOCK_SIZE)
+    row_indices = row_start + row_offsets
+    row_mask = row_indices < N
+    
+    col_offsets = tl.arange(0, BLOCK_SIZE)
+    
     # First loop: A[i][j] = A[i][j] + u1[i] * v1[j] + u2[i] * v2[j]
-    i_offsets = tl.arange(0, BLOCK_SIZE)
-    j_offsets = tl.arange(0, BLOCK_SIZE)
-    
-    for i_block in range(0, N, BLOCK_SIZE):
-        i_current = i_block + i_offsets
-        i_mask = i_current < N
+    if pid * BLOCK_SIZE < N:
+        # Load u1[i], u2[i] for this row block
+        u1_vals = tl.load(u1_ptr + row_indices, mask=row_mask)
+        u2_vals = tl.load(u2_ptr + row_indices, mask=row_mask)
         
-        u1_vals = tl.load(u1_ptr + i_current, mask=i_mask, other=0.0)
-        u2_vals = tl.load(u2_ptr + i_current, mask=i_mask, other=0.0)
-        
-        for j_block in range(0, N, BLOCK_SIZE):
-            j_current = j_block + j_offsets
-            j_mask = j_current < N
+        # Process columns in blocks
+        for col_start in range(0, N, BLOCK_SIZE):
+            col_indices = col_start + col_offsets
+            col_mask = col_indices < N
             
-            v1_vals = tl.load(v1_ptr + j_current, mask=j_mask, other=0.0)
-            v2_vals = tl.load(v2_ptr + j_current, mask=j_mask, other=0.0)
+            # Load v1[j], v2[j] for this column block
+            v1_vals = tl.load(v1_ptr + col_indices, mask=col_mask)
+            v2_vals = tl.load(v2_ptr + col_indices, mask=col_mask)
             
-            for i_idx in range(BLOCK_SIZE):
-                if i_block + i_idx >= N:
-                    break
-                
-                i_val = i_block + i_idx
-                u1_i = tl.load(u1_ptr + i_val)
-                u2_i = tl.load(u2_ptr + i_val)
-                
-                A_row_ptr = A_ptr + i_val * N
-                A_vals = tl.load(A_row_ptr + j_current, mask=j_mask, other=0.0)
-                
-                update_vals = u1_i * v1_vals + u2_i * v2_vals
-                new_A_vals = A_vals + update_vals
-                
-                tl.store(A_row_ptr + j_current, new_A_vals, mask=j_mask)
-    
+            # Update A[i][j] for each valid (i,j) pair
+            for r in range(BLOCK_SIZE):
+                if row_start + r < N:
+                    row_idx = row_start + r
+                    a_row_offset = row_idx * N
+                    
+                    # Load current row of A
+                    a_offsets = a_row_offset + col_indices
+                    valid_mask = col_mask
+                    a_vals = tl.load(A_ptr + a_offsets, mask=valid_mask)
+                    
+                    # Compute updates
+                    u1_broadcast = u1_vals[r]
+                    u2_broadcast = u2_vals[r]
+                    update = u1_broadcast * v1_vals + u2_broadcast * v2_vals
+                    new_a_vals = a_vals + update
+                    
+                    # Store back
+                    tl.store(A_ptr + a_offsets, new_a_vals, mask=valid_mask)
+
     # Second loop: x[i] = x[i] + beta * A[j][i] * y[j]
-    for i_block in range(0, N, BLOCK_SIZE):
-        i_current = i_block + i_offsets
-        i_mask = i_current < N
+    if pid * BLOCK_SIZE < N:
+        # Load current x values
+        x_vals = tl.load(x_ptr + row_indices, mask=row_mask)
         
-        x_vals = tl.load(x_ptr + i_current, mask=i_mask, other=0.0)
-        
-        for j_block in range(0, N, BLOCK_SIZE):
-            j_current = j_block + j_offsets
-            j_mask = j_current < N
+        # For each column (which becomes our row in A[j][i])
+        for col_start in range(0, N, BLOCK_SIZE):
+            col_indices = col_start + col_offsets
+            col_mask = col_indices < N
             
-            y_vals = tl.load(y_ptr + j_current, mask=j_mask, other=0.0)
+            # Load y[j] values
+            y_vals = tl.load(y_ptr + col_indices, mask=col_mask)
             
-            for j_idx in range(BLOCK_SIZE):
-                if j_block + j_idx >= N:
-                    break
-                
-                j_val = j_block + j_idx
-                y_j = tl.load(y_ptr + j_val)
-                
-                A_col_indices = j_val * N + i_current
-                col_mask = i_mask
-                A_col_vals = tl.load(A_ptr + A_col_indices, mask=col_mask, other=0.0)
-                
-                x_vals = x_vals + beta * A_col_vals * y_j
+            # Accumulate x[i] += beta * A[j][i] * y[j]
+            for c in range(BLOCK_SIZE):
+                if col_start + c < N:
+                    j = col_start + c
+                    y_val = y_vals[c]
+                    
+                    # Load A[j][i] - column j, rows in our block
+                    a_offsets = j * N + row_indices
+                    a_vals = tl.load(A_ptr + a_offsets, mask=row_mask)
+                    
+                    # Update x values
+                    x_vals = x_vals + beta * a_vals * y_val
         
-        tl.store(x_ptr + i_current, x_vals, mask=i_mask)
-    
+        # Store updated x values
+        tl.store(x_ptr + row_indices, x_vals, mask=row_mask)
+
     # Third loop: x[i] = x[i] + z[i]
-    for i_block in range(0, N, BLOCK_SIZE):
-        i_current = i_block + i_offsets
-        i_mask = i_current < N
-        
-        x_vals = tl.load(x_ptr + i_current, mask=i_mask, other=0.0)
-        z_vals = tl.load(z_ptr + i_current, mask=i_mask, other=0.0)
-        
-        new_x_vals = x_vals + z_vals
-        
-        tl.store(x_ptr + i_current, new_x_vals, mask=i_mask)
-    
+    if pid * BLOCK_SIZE < N:
+        x_vals = tl.load(x_ptr + row_indices, mask=row_mask)
+        z_vals = tl.load(z_ptr + row_indices, mask=row_mask)
+        x_vals = x_vals + z_vals
+        tl.store(x_ptr + row_indices, x_vals, mask=row_mask)
+
     # Fourth loop: w[i] = w[i] + alpha * A[i][j] * x[j]
-    for i_block in range(0, N, BLOCK_SIZE):
-        i_current = i_block + i_offsets
-        i_mask = i_current < N
+    if pid * BLOCK_SIZE < N:
+        # Load current w values
+        w_vals = tl.load(w_ptr + row_indices, mask=row_mask)
         
-        w_vals = tl.load(w_ptr + i_current, mask=i_mask, other=0.0)
+        # Process columns in blocks
+        for col_start in range(0, N, BLOCK_SIZE):
+            col_indices = col_start + col_offsets
+            col_mask = col_indices < N
+            
+            # Load x[j] values
+            x_vals = tl.load(x_ptr + col_indices, mask=col_mask)
+            
+            # Accumulate w[i] += alpha * A[i][j] * x[j]
+            for r in range(BLOCK_SIZE):
+                if row_start + r < N:
+                    row_idx = row_start + r
+                    a_row_offset = row_idx * N
+                    
+                    # Load A[i][j] for this row
+                    a_offsets = a_row_offset + col_indices
+                    a_vals = tl.load(A_ptr + a_offsets, mask=col_mask)
+                    
+                    # Compute dot product contribution
+                    contrib = tl.sum(alpha * a_vals * x_vals, axis=0)
+                    w_vals = w_vals.to(tl.float32)
+                    w_vals = tl.where(row_offsets == r, w_vals[r] + contrib, w_vals)
         
-        for j_block in range(0, N, BLOCK_SIZE):
-            j_current = j_block + j_offsets
-            j_mask = j_current < N
-            
-            x_vals = tl.load(x_ptr + j_current, mask=j_mask, other=0.0)
-            
-            for i_idx in range(BLOCK_SIZE):
-                if i_block + i_idx >= N:
-                    break
-                
-                i_val = i_block + i_idx
-                
-                A_row_ptr = A_ptr + i_val * N
-                A_vals = tl.load(A_row_ptr + j_current, mask=j_mask, other=0.0)
-                
-                w_i = tl.load(w_ptr + i_val)
-                dot_product = tl.sum(alpha * A_vals * x_vals)
-                new_w_i = w_i + dot_product
-                
-                tl.store(w_ptr + i_val, new_w_i)
+        # Store updated w values
+        tl.store(w_ptr + row_indices, w_vals, mask=row_mask)
+
 
 def gemver_triton(A, u1, u2, v1, v2, w, x, y, z, alpha, beta, N):
     BLOCK_SIZE = 32
+    num_blocks = triton.cdiv(N, BLOCK_SIZE)
     
-    grid = (1,)
-    
-    gemver_kernel[grid](
+    gemver_kernel[(num_blocks,)](
         A, u1, u2, v1, v2, w, x, y, z,
-        alpha, beta, N,
-        BLOCK_SIZE=BLOCK_SIZE
+        alpha, beta, N, BLOCK_SIZE
     )
 ```

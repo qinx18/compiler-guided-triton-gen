@@ -1,0 +1,38 @@
+{
+  "hotspot": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 1.414324,
+      "triton_time_ms": 1.343922,
+      "speedup": 1.052385
+    },
+    "final_attempt": 1
+  },
+  "lud": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 11.359911,
+      "triton_time_ms": 0.861969,
+      "speedup": 13.17903
+    },
+    "final_attempt": 1
+  },
+  "pathfinder": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 0.439639,
+      "triton_time_ms": 4.102124,
+      "speedup": 0.107173
+    },
+    "final_attempt": 1
+  }
+}

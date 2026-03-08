@@ -1,18 +1,108 @@
-import torch
 import triton
 import triton.language as tl
+import torch
 
 @triton.jit
-def adi_kernel(p_ptr, q_ptr, u_ptr, v_ptr, N, TSTEPS, 
-               BLOCK_SIZE: tl.constexpr):
-    # Get program id for time step
-    t_id = tl.program_id(0)
-    t = t_id + 1
+def adi_column_sweep_kernel(
+    u_ptr, v_ptr, p_ptr, q_ptr,
+    a, b, c, d, e, f,
+    N: tl.constexpr, BLOCK_SIZE: tl.constexpr
+):
+    pid = tl.program_id(0)
+    i = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     
-    if t > TSTEPS:
-        return
+    mask = (i >= 1) & (i < N - 1)
     
-    # Calculate coefficients
+    for idx in range(BLOCK_SIZE):
+        if pid * BLOCK_SIZE + idx >= 1 and pid * BLOCK_SIZE + idx < N - 1:
+            i_val = pid * BLOCK_SIZE + idx
+            
+            # v[0][i] = 1.0
+            tl.store(v_ptr + 0 * N + i_val, 1.0)
+            
+            # p[i][0] = 0.0, q[i][0] = v[0][i]
+            tl.store(p_ptr + i_val * N + 0, 0.0)
+            tl.store(q_ptr + i_val * N + 0, 1.0)
+            
+            # Forward sweep
+            for j in range(1, N - 1):
+                p_prev = tl.load(p_ptr + i_val * N + (j - 1))
+                q_prev = tl.load(q_ptr + i_val * N + (j - 1))
+                
+                u_prev = tl.load(u_ptr + j * N + (i_val - 1))
+                u_curr = tl.load(u_ptr + j * N + i_val)
+                u_next = tl.load(u_ptr + j * N + (i_val + 1))
+                
+                p_val = -c / (a * p_prev + b)
+                q_val = (-d * u_prev + (1.0 + 2.0 * d) * u_curr - f * u_next - a * q_prev) / (a * p_prev + b)
+                
+                tl.store(p_ptr + i_val * N + j, p_val)
+                tl.store(q_ptr + i_val * N + j, q_val)
+            
+            # v[N-1][i] = 1.0
+            tl.store(v_ptr + (N - 1) * N + i_val, 1.0)
+            
+            # Backward sweep
+            for j in range(N - 2, 0, -1):
+                p_val = tl.load(p_ptr + i_val * N + j)
+                q_val = tl.load(q_ptr + i_val * N + j)
+                v_next = tl.load(v_ptr + (j + 1) * N + i_val)
+                
+                v_val = p_val * v_next + q_val
+                tl.store(v_ptr + j * N + i_val, v_val)
+
+@triton.jit
+def adi_row_sweep_kernel(
+    u_ptr, v_ptr, p_ptr, q_ptr,
+    a, b, c, d, e, f,
+    N: tl.constexpr, BLOCK_SIZE: tl.constexpr
+):
+    pid = tl.program_id(0)
+    i = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    
+    mask = (i >= 1) & (i < N - 1)
+    
+    for idx in range(BLOCK_SIZE):
+        if pid * BLOCK_SIZE + idx >= 1 and pid * BLOCK_SIZE + idx < N - 1:
+            i_val = pid * BLOCK_SIZE + idx
+            
+            # u[i][0] = 1.0
+            tl.store(u_ptr + i_val * N + 0, 1.0)
+            
+            # p[i][0] = 0.0, q[i][0] = u[i][0]
+            tl.store(p_ptr + i_val * N + 0, 0.0)
+            tl.store(q_ptr + i_val * N + 0, 1.0)
+            
+            # Forward sweep
+            for j in range(1, N - 1):
+                p_prev = tl.load(p_ptr + i_val * N + (j - 1))
+                q_prev = tl.load(q_ptr + i_val * N + (j - 1))
+                
+                v_prev = tl.load(v_ptr + (i_val - 1) * N + j)
+                v_curr = tl.load(v_ptr + i_val * N + j)
+                v_next = tl.load(v_ptr + (i_val + 1) * N + j)
+                
+                p_val = -f / (d * p_prev + e)
+                q_val = (-a * v_prev + (1.0 + 2.0 * a) * v_curr - c * v_next - d * q_prev) / (d * p_prev + e)
+                
+                tl.store(p_ptr + i_val * N + j, p_val)
+                tl.store(q_ptr + i_val * N + j, q_val)
+            
+            # u[i][N-1] = 1.0
+            tl.store(u_ptr + i_val * N + (N - 1), 1.0)
+            
+            # Backward sweep
+            for j in range(N - 2, 0, -1):
+                p_val = tl.load(p_ptr + i_val * N + j)
+                q_val = tl.load(q_ptr + i_val * N + j)
+                u_next = tl.load(u_ptr + i_val * N + (j + 1))
+                
+                u_val = p_val * u_next + q_val
+                tl.store(u_ptr + i_val * N + j, u_val)
+
+def adi_triton(p, q, u, v, N, TSTEPS):
+    device = u.device
+    
     DX = 1.0 / N
     DY = 1.0 / N
     DT = 1.0 / TSTEPS
@@ -28,118 +118,20 @@ def adi_kernel(p_ptr, q_ptr, u_ptr, v_ptr, N, TSTEPS,
     e = 1.0 + mul2
     f = d
     
-    # Column Sweep
-    for i in range(1, N-1):
-        # Set boundary conditions
-        v_idx = 0 * N + i
-        tl.store(v_ptr + v_idx, 1.0)
-        
-        p_idx = i * N + 0
-        q_idx = i * N + 0
-        tl.store(p_ptr + p_idx, 0.0)
-        v_val = tl.load(v_ptr + v_idx)
-        tl.store(q_ptr + q_idx, v_val)
-        
-        # Forward sweep
-        for j in range(1, N-1):
-            p_curr_idx = i * N + j
-            p_prev_idx = i * N + (j-1)
-            q_curr_idx = i * N + j
-            q_prev_idx = i * N + (j-1)
-            
-            u_idx1 = j * N + (i-1)
-            u_idx2 = j * N + i
-            u_idx3 = j * N + (i+1)
-            
-            p_prev = tl.load(p_ptr + p_prev_idx)
-            q_prev = tl.load(q_ptr + q_prev_idx)
-            u1 = tl.load(u_ptr + u_idx1)
-            u2 = tl.load(u_ptr + u_idx2)
-            u3 = tl.load(u_ptr + u_idx3)
-            
-            p_val = -c / (a * p_prev + b)
-            q_val = (-d * u1 + (1.0 + 2.0 * d) * u2 - f * u3 - a * q_prev) / (a * p_prev + b)
-            
-            tl.store(p_ptr + p_curr_idx, p_val)
-            tl.store(q_ptr + q_curr_idx, q_val)
-        
-        # Set boundary condition
-        v_end_idx = (N-1) * N + i
-        tl.store(v_ptr + v_end_idx, 1.0)
-        
-        # Backward sweep
-        for j in range(N-2, 0, -1):
-            v_curr_idx = j * N + i
-            v_next_idx = (j+1) * N + i
-            p_idx = i * N + j
-            q_idx = i * N + j
-            
-            v_next = tl.load(v_ptr + v_next_idx)
-            p_val = tl.load(p_ptr + p_idx)
-            q_val = tl.load(q_ptr + q_idx)
-            
-            v_val = p_val * v_next + q_val
-            tl.store(v_ptr + v_curr_idx, v_val)
+    BLOCK_SIZE = 32
+    grid_size = triton.cdiv(N - 2, BLOCK_SIZE)
     
-    # Row Sweep
-    for i in range(1, N-1):
-        # Set boundary conditions
-        u_idx = i * N + 0
-        tl.store(u_ptr + u_idx, 1.0)
+    for t in range(1, TSTEPS + 1):
+        # Column Sweep
+        adi_column_sweep_kernel[(grid_size,)](
+            u, v, p, q,
+            a, b, c, d, e, f,
+            N, BLOCK_SIZE
+        )
         
-        p_idx = i * N + 0
-        q_idx = i * N + 0
-        tl.store(p_ptr + p_idx, 0.0)
-        u_val = tl.load(u_ptr + u_idx)
-        tl.store(q_ptr + q_idx, u_val)
-        
-        # Forward sweep
-        for j in range(1, N-1):
-            p_curr_idx = i * N + j
-            p_prev_idx = i * N + (j-1)
-            q_curr_idx = i * N + j
-            q_prev_idx = i * N + (j-1)
-            
-            v_idx1 = (i-1) * N + j
-            v_idx2 = i * N + j
-            v_idx3 = (i+1) * N + j
-            
-            p_prev = tl.load(p_ptr + p_prev_idx)
-            q_prev = tl.load(q_ptr + q_prev_idx)
-            v1 = tl.load(v_ptr + v_idx1)
-            v2 = tl.load(v_ptr + v_idx2)
-            v3 = tl.load(v_ptr + v_idx3)
-            
-            p_val = -f / (d * p_prev + e)
-            q_val = (-a * v1 + (1.0 + 2.0 * a) * v2 - c * v3 - d * q_prev) / (d * p_prev + e)
-            
-            tl.store(p_ptr + p_curr_idx, p_val)
-            tl.store(q_ptr + q_curr_idx, q_val)
-        
-        # Set boundary condition
-        u_end_idx = i * N + (N-1)
-        tl.store(u_ptr + u_end_idx, 1.0)
-        
-        # Backward sweep
-        for j in range(N-2, 0, -1):
-            u_curr_idx = i * N + j
-            u_next_idx = i * N + (j+1)
-            p_idx = i * N + j
-            q_idx = i * N + j
-            
-            u_next = tl.load(u_ptr + u_next_idx)
-            p_val = tl.load(p_ptr + p_idx)
-            q_val = tl.load(q_ptr + q_idx)
-            
-            u_val = p_val * u_next + q_val
-            tl.store(u_ptr + u_curr_idx, u_val)
-
-def adi_triton(p, q, u, v, N, TSTEPS):
-    BLOCK_SIZE = 1
-    grid = (TSTEPS,)
-    
-    adi_kernel[grid](
-        p, q, u, v,
-        N, TSTEPS,
-        BLOCK_SIZE=BLOCK_SIZE
-    )
+        # Row Sweep
+        adi_row_sweep_kernel[(grid_size,)](
+            u, v, p, q,
+            a, b, c, d, e, f,
+            N, BLOCK_SIZE
+        )
