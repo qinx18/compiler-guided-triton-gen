@@ -99,6 +99,7 @@ POLYBENCH_KERNELS_DIR = "/home/qinxiao/workspace/pet/isl_analysis/kernels_polybe
 MAX_ATTEMPTS = 10
 OUTPUT_DIR = "polybench_results"
 ENABLE_ANALYSIS = True
+SIZE_SCALE = 1  # Default: use original SMALL_DATASET sizes
 
 # Kernels requiring higher tolerance due to long sequential dependency chains.
 # These are algorithmically correct but FP32 rounding diverges between CPU and GPU
@@ -229,7 +230,12 @@ def get_kernel_params(kernel_name: str) -> dict:
     # Map underscore names back to original
     for orig_name, info in POLYBENCH_KERNELS.items():
         if orig_name.replace("-", "_") == kernel_name:
-            return info["params"]
+            params = dict(info["params"])
+            if SIZE_SCALE > 1:
+                for k, v in params.items():
+                    if k not in ("TSTEPS", "TMAX"):
+                        params[k] = v * SIZE_SCALE
+            return params
     return {}
 
 
@@ -1073,6 +1079,8 @@ def generate_correctness_test(kernel_name: str, func_spec: dict, attempt: int = 
     else:
         import_block = f"from {OUTPUT_DIR}.{llm_subdir}.{kernel_name}.attempt{attempt} import {func_id}_triton"
 
+    c_lib_subdir = f"polybench_libs_scale{SIZE_SCALE}x" if SIZE_SCALE > 1 else "polybench_libs"
+
     test_code = f'''#!/usr/bin/env python3
 """Correctness test for {kernel_name} (Polybench) - attempt {attempt}"""
 import sys
@@ -1091,7 +1099,7 @@ except ImportError as e:
     sys.exit(1)
 
 # Load C reference
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "lib{kernel_name}.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "{c_lib_subdir}" / "lib{kernel_name}.so"
 if not C_LIB_PATH.exists():
     print(f"C reference library not found: {{C_LIB_PATH}}")
     sys.exit(1)
@@ -1429,6 +1437,8 @@ def generate_benchmark_test(kernel_name: str, func_spec: dict, attempt: int = 1)
     else:
         import_block = f"from {OUTPUT_DIR}.{llm_subdir}.{kernel_name}.attempt{attempt} import {func_id}_triton"
 
+    c_lib_subdir = f"polybench_libs_scale{SIZE_SCALE}x" if SIZE_SCALE > 1 else "polybench_libs"
+
     benchmark_code = f'''#!/usr/bin/env python3
 """Performance Benchmark for {kernel_name} (Polybench)"""
 import sys
@@ -1446,7 +1456,7 @@ except ImportError as e:
     print(f"Import error: {{e}}")
     sys.exit(1)
 
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "lib{kernel_name}.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "{c_lib_subdir}" / "lib{kernel_name}.so"
 
 def run_c_reference({c_call_str}):
     lib = ctypes.CDLL(str(C_LIB_PATH))
@@ -1739,6 +1749,26 @@ def run_test(kernel_name: str, test_file: Path) -> Tuple[bool, dict]:
         return False, {'type': 'exception', 'message': str(e)}
 
 
+def compile_c_at_scale(kernel_name: str, params: dict) -> Optional[str]:
+    """Compile C kernel with overridden size defines for scaled sizes. Returns .so path or None."""
+    c_name = kernel_name.replace("-", "_")
+    c_file = Path(POLYBENCH_KERNELS_DIR) / f"{c_name}.c"
+    if not c_file.exists():
+        return None
+    lib_dir = Path("c_reference") / f"polybench_libs_scale{SIZE_SCALE}x"
+    lib_dir.mkdir(parents=True, exist_ok=True)
+    so_file = lib_dir / f"lib{c_name}.so"
+    if so_file.exists():
+        return str(so_file)
+    d_flags = [f"-D{k}={v}" for k, v in params.items()]
+    result = subprocess.run(
+        ["/usr/local/bin/clang", "-shared", "-fPIC", "-O2"] + d_flags +
+        ["-o", str(so_file), str(c_file), "-lm"],
+        capture_output=True, text=True, timeout=30
+    )
+    return str(so_file) if result.returncode == 0 else None
+
+
 # ============================================================================
 # Main pipeline
 # ============================================================================
@@ -1821,6 +1851,13 @@ def process_kernel(kernel_name: str, func_spec: dict) -> dict:
 
             print(f"  Saved Triton code to: {triton_file}")
             results["triton_generated"] = True
+
+            # Compile C reference at scaled sizes if needed
+            if SIZE_SCALE > 1 and attempt == 1:
+                params = get_kernel_params(kernel_name)
+                so_path = compile_c_at_scale(kernel_name, params)
+                if not so_path:
+                    print(f"  WARNING: C compilation at scale {SIZE_SCALE}x failed")
 
             # Generate and run test
             test_code = generate_correctness_test(kernel_name, func_spec, attempt)
@@ -1985,12 +2022,22 @@ def benchmark_passed_kernels(kernel_names: list = None):
 
 def main():
     """Main Polybench pipeline."""
-    global ENABLE_ANALYSIS
+    global ENABLE_ANALYSIS, SIZE_SCALE, OUTPUT_DIR
 
     # Check for --no-analysis flag
     if '--no-analysis' in sys.argv:
         sys.argv.remove('--no-analysis')
         ENABLE_ANALYSIS = False
+
+    # Check for --size-scale flag
+    if '--size-scale' in sys.argv:
+        idx = sys.argv.index('--size-scale')
+        SIZE_SCALE = int(sys.argv[idx + 1])
+        sys.argv.pop(idx)  # remove flag
+        sys.argv.pop(idx)  # remove value
+
+    if SIZE_SCALE > 1:
+        OUTPUT_DIR = f"polybench_results_scale{SIZE_SCALE}x"
 
     # Check for --benchmark flag
     if '--benchmark' in sys.argv:
@@ -2000,9 +2047,10 @@ def main():
         return
 
     analysis_mode = "WITH analysis" if ENABLE_ANALYSIS else "WITHOUT analysis (ablation)"
+    scale_info = f" | Size scale: {SIZE_SCALE}x" if SIZE_SCALE > 1 else ""
     print("=" * 70)
     print("Polybench/C Generation and Testing Pipeline")
-    print(f"Mode: {analysis_mode}")
+    print(f"Mode: {analysis_mode}{scale_info}")
     print(f"Total kernels available: {len(POLYBENCH_FUNCTIONS)}")
     print(f"Max attempts per kernel: {MAX_ATTEMPTS}")
     print("=" * 70)

@@ -90,26 +90,24 @@ def benchmark_kernel_with_mode(kernel_name: str, scale: int, use_analysis: bool,
 
 
 def main():
-    # Load both WA and NA results to find dual-passing kernels
+    # Load both WA and NA results — try ALL kernels, not just dual-passing
     with open(RESULTS_DIR / "results.json") as f:
         wa_results = json.load(f)
     with open(RESULTS_DIR / "results_no_analysis.json") as f:
         na_results = json.load(f)
 
-    wa_passed = {k for k, v in wa_results.items() if v.get("test_passed")}
-    na_passed = {k for k, v in na_results.items() if v.get("test_passed")}
-    dual_passed = sorted(wa_passed & na_passed)
+    all_kernels = sorted(set(list(wa_results.keys()) + list(na_results.keys())))
 
     if len(sys.argv) > 1 and sys.argv[1] == "--all":
-        kernels = dual_passed
+        kernels = all_kernels
     elif len(sys.argv) > 1:
-        kernels = [k for k in sys.argv[1:] if k in dual_passed]
+        kernels = [k for k in sys.argv[1:] if k in all_kernels]
     else:
-        kernels = dual_passed
+        kernels = all_kernels
 
     print("=" * 120)
     print(f"LARGE-SIZE ABLATION: WA vs NA Triton Code (parallel={SCALE_FACTOR}x, sequential={SEQUENTIAL_SCALE}x)")
-    print(f"Dual-passing kernels: {len(dual_passed)} | Benchmarking: {len(kernels)}")
+    print(f"Total kernels: {len(all_kernels)} | Benchmarking: {len(kernels)}")
     print(f"Timeout: {KERNEL_TIMEOUT}s per kernel per mode")
     print("=" * 120)
     print()

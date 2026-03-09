@@ -55,6 +55,8 @@ KERNEL_TIMEOUT = 60
 BASE_DIR = Path(__file__).parent
 RESULTS_DIR = BASE_DIR / "polybench_results"
 KERNELS_DIR = Path("/home/qinxiao/workspace/pet/isl_analysis/kernels_polybench")
+CLANG = "/usr/local/bin/clang"
+C_LARGE_LIBS_DIR = BASE_DIR / "c_reference" / "polybench_libs_large"
 
 # Import kernel database
 sys.path.insert(0, str(Path("/home/qinxiao/workspace/pet/isl_analysis")))
@@ -119,6 +121,75 @@ def get_array_shapes(kernel_name: str, params: dict) -> dict:
         shapes[arr_name] = shape
 
     return shapes
+
+
+def compile_c_at_large_size(kernel_name: str, params: dict) -> str:
+    """Compile a Polybench C kernel with overridden size defines. Returns .so path."""
+    import subprocess
+    c_name = kernel_name.replace("-", "_")
+    c_file = KERNELS_DIR / f"{c_name}.c"
+    if not c_file.exists():
+        return None
+
+    os.makedirs(C_LARGE_LIBS_DIR, exist_ok=True)
+    tag = "_".join(f"{k}{v}" for k, v in sorted(params.items()))
+    so_file = C_LARGE_LIBS_DIR / f"lib{c_name}_{tag}.so"
+    if so_file.exists():
+        return str(so_file)
+
+    # Build -D flags to override all size #defines
+    d_flags = [f"-D{k}={v}" for k, v in params.items()]
+    result = subprocess.run(
+        [CLANG, "-shared", "-fPIC", "-O2"] + d_flags + ["-o", str(so_file), str(c_file), "-lm"],
+        capture_output=True, text=True, timeout=30
+    )
+    if result.returncode != 0:
+        return None
+    return str(so_file)
+
+
+def benchmark_c_kernel(kernel_name: str, params: dict, num_warmup=2, num_iterations=5):
+    """Benchmark C reference kernel at given sizes. Returns time in ms or None."""
+    import ctypes
+    so_path = compile_c_at_large_size(kernel_name, params)
+    if so_path is None:
+        return None
+
+    try:
+        lib = ctypes.CDLL(so_path)
+    except Exception:
+        return None
+
+    # C function name: kernel_name_kernel (prefix 'k' if starts with digit)
+    c_name = kernel_name.replace("-", "_")
+    func_id = c_name if not c_name[0].isdigit() else "k" + c_name
+    func_name = f"{func_id}_kernel"
+    try:
+        c_func = getattr(lib, func_name)
+    except AttributeError:
+        return None
+
+    old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(KERNEL_TIMEOUT)
+
+    try:
+        # Warmup
+        for _ in range(num_warmup):
+            c_func()
+        # Timed
+        start = time.perf_counter()
+        for _ in range(num_iterations):
+            c_func()
+        elapsed = (time.perf_counter() - start) / num_iterations
+        c_ms = elapsed * 1000
+    except (TimeoutError, Exception):
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
+        return None
+
+    signal.alarm(0)
+    signal.signal(signal.SIGALRM, old_handler)
+    return c_ms
 
 
 def create_tensors(kernel_name: str, params: dict, arrays_info: dict) -> dict:
@@ -318,7 +389,7 @@ def main():
     print("=" * 110)
     print()
 
-    header = f"{'Kernel':<15} {'Scale':>5} {'Small_t':>9} {'Large_t':>9} {'Sm_Spd':>7} {'SmSize':>12} {'LgSize':>12} {'Status':>8}"
+    header = f"{'Kernel':<15} {'Scale':>5} {'Sm_Spd':>7} {'Lg_Tri':>9} {'Lg_C':>9} {'Lg_Spd':>7} {'Status':>8}"
     print(header)
     print("-" * len(header))
 
@@ -335,33 +406,30 @@ def main():
         orig_params = get_original_params(kernel_name)
         scaled_params = get_scaled_params(kernel_name, scale)
 
-        # Size summary (first non-TSTEPS param)
-        sm_size = ""
-        lg_size = ""
-        for k in orig_params:
-            if k not in ("TSTEPS", "TMAX"):
-                sm_size = f"{k}={orig_params[k]}"
-                lg_size = f"{k}={scaled_params.get(k, '?')}"
-                break
-
         result = benchmark_kernel(kernel_name, scale)
 
         if result is None:
-            print(f"{kernel_name:<15} {scale:>4}x {small_t:>8.3f}ms {'N/A':>9} {small_spd:>6.1f}x {sm_size:>12} {lg_size:>12} {'SKIP':>8}")
+            print(f"{kernel_name:<15} {scale:>4}x {small_spd:>6.1f}x {'N/A':>9} {'N/A':>9} {'N/A':>7} {'SKIP':>8}")
             continue
 
         if "error" in result:
             err = result["error"][:40]
-            print(f"{kernel_name:<15} {scale:>4}x {small_t:>8.3f}ms {'ERR':>9} {small_spd:>6.1f}x {sm_size:>12} {lg_size:>12} {err}")
+            print(f"{kernel_name:<15} {scale:>4}x {small_spd:>6.1f}x {'ERR':>9} {'N/A':>9} {'N/A':>7} {err}")
             all_results[kernel_name] = result
             continue
 
         large_t = result["triton_time_ms"]
-        status = "OK"
 
-        print(f"{kernel_name:<15} {scale:>4}x {small_t:>8.3f}ms {large_t:>8.3f}ms {small_spd:>6.1f}x {sm_size:>12} {lg_size:>12} {status:>8}")
+        # Benchmark C reference at large size
+        c_ms = benchmark_c_kernel(kernel_name, scaled_params)
+        large_spd = c_ms / large_t if c_ms and large_t > 0 else None
 
-        all_results[kernel_name] = {
+        c_str = f"{c_ms:>8.3f}ms" if c_ms else "timeout"
+        spd_str = f"{large_spd:>6.1f}x" if large_spd else "N/A"
+
+        print(f"{kernel_name:<15} {scale:>4}x {small_spd:>6.1f}x {large_t:>8.3f}ms {c_str} {spd_str:>7} {'OK':>8}")
+
+        entry = {
             "small_triton_ms": small_t,
             "large_triton_ms": large_t,
             "small_speedup": small_spd,
@@ -369,6 +437,10 @@ def main():
             "small_params": orig_params,
             "large_params": scaled_params,
         }
+        if c_ms is not None:
+            entry["large_c_ref_ms"] = c_ms
+            entry["large_speedup"] = large_spd
+        all_results[kernel_name] = entry
 
     print()
 

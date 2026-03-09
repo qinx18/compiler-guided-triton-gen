@@ -2968,17 +2968,17 @@ def slide_15b_large_size_benchmark(prs):
     ok = [(k, v) for k, v in data.items() if "large_triton_ms" in v and "error" not in v]
     ok.sort(key=lambda x: -x[1]["large_triton_ms"])
 
-    # Split into two groups for the table: top compute-heavy + fast kernels
-    rows = [["Kernel", "Scale", "Small (ms)", "Large (ms)", "Ratio", "Orig Spd"]]
+    # Table with original and large-size speedups
+    rows = [["Kernel", "Scale", "Orig Spd", "Large Tri (ms)", "Large C (ms)", "Large Spd"]]
     for kname, v in ok:
-        sm = v["small_triton_ms"]
+        sm_spd = v.get("small_speedup", 0)
         lg = v["large_triton_ms"]
-        ratio = lg / sm if sm > 0 else 0
-        spd = v.get("small_speedup", 0)
+        lg_c = v.get("large_c_ref_ms")
+        lg_spd = v.get("large_speedup")
         scale = v.get("scale_factor", 8)
-        rows.append([kname, f"{scale}x", f"{sm:.3f}", f"{lg:.3f}",
-                     f"{ratio:.0f}x" if ratio >= 1 else f"{ratio:.2f}x",
-                     f"{spd:.1f}x"])
+        rows.append([kname, f"{scale}x", f"{sm_spd:.1f}x", f"{lg:.3f}",
+                     f"{lg_c:.1f}" if lg_c else "—",
+                     f"{lg_spd:.1f}x" if lg_spd else "—"])
 
     # Two-column layout: table on left, stats on right
     n_show = min(len(rows) - 1, 15)  # Cap at 15 data rows
@@ -2987,46 +2987,49 @@ def slide_15b_large_size_benchmark(prs):
         display_rows.append(["...", "", "", "", "", f"({len(rows)-1} total)"])
 
     add_simple_table(slide, Inches(0.15), Inches(1.15), Inches(5.8),
-                     [1.1, 0.55, 0.9, 1.0, 0.7, 0.7], display_rows,
+                     [1.1, 0.55, 0.8, 1.1, 1.0, 0.8], display_rows,
                      font_size=8, row_height=0.22)
 
     # Stats panel on right
     stats_x = Inches(6.2)
-    sm_times = [v["small_triton_ms"] for _, v in ok if v["small_triton_ms"] > 0]
-    lg_times = [v["large_triton_ms"] for _, v in ok]
+    sm_spds = [v.get("small_speedup", 0) for _, v in ok if v.get("small_speedup", 0) > 0]
+    lg_spds = [v.get("large_speedup", 0) for _, v in ok if v.get("large_speedup")]
+    lg_gt1 = [s for s in lg_spds if s > 1.0]
+    sm_gt1 = [s for s in sm_spds if s > 1.0]
 
     add_textbox(slide, stats_x, Inches(1.15), Inches(3.6), Inches(0.25),
                 "Summary Statistics:", font_size=13, bold=True, color=DARK_BLUE)
 
     stats_items = [
         f"Kernels: {len(ok)}/30 benchmarked",
-        f"Small median: {sorted(sm_times)[len(sm_times)//2]:.3f} ms",
-        f"Large median: {sorted(lg_times)[len(lg_times)//2]:.3f} ms",
-        f"Median growth: {sorted(lg_times)[len(lg_times)//2]/sorted(sm_times)[len(sm_times)//2]:.0f}x",
+        f"Large-size speedups: {len(lg_spds)}/30 have C ref",
     ]
-
-    # Count kernels that got faster (better amortization)
-    faster = sum(1 for _, v in ok if v["large_triton_ms"] < v["small_triton_ms"] and v["small_triton_ms"] > 0)
-    if faster > 0:
-        faster_names = [k for k, v in ok if v["large_triton_ms"] < v["small_triton_ms"] and v["small_triton_ms"] > 0]
-        stats_items.append(f"Faster at 8x: {faster} kernels")
-        stats_items.append(f"  ({', '.join(faster_names[:4])})")
+    if lg_spds:
+        lg_sorted = sorted(lg_spds)
+        sm_sorted = sorted(sm_spds) if sm_spds else [0]
+        stats_items.append(f"Orig median speedup: {sm_sorted[len(sm_sorted)//2]:.1f}x")
+        stats_items.append(f"Large median speedup: {lg_sorted[len(lg_sorted)//2]:.1f}x")
+        stats_items.append(f"GPU speedup (>1x): {len(sm_gt1)} orig → {len(lg_gt1)} large")
 
     add_bullet_list(slide, stats_x, Inches(1.45), Inches(3.6), Inches(2.0),
                     stats_items, font_size=10, color=DARK_TEXT)
 
-    # Key categories
+    # Improved / degraded categories
     add_textbox(slide, stats_x, Inches(3.2), Inches(3.6), Inches(0.25),
-                "Kernel Categories:", font_size=13, bold=True, color=ACCENT_GREEN)
+                "Speedup Change:", font_size=13, bold=True, color=ACCENT_GREEN)
 
-    heavy_compute = [(k, v["large_triton_ms"]) for k, v in ok if v["large_triton_ms"] > 100]
-    medium = [(k, v["large_triton_ms"]) for k, v in ok if 1 < v["large_triton_ms"] <= 100]
-    light = [(k, v["large_triton_ms"]) for k, v in ok if v["large_triton_ms"] <= 1]
+    improved = sum(1 for _, v in ok
+                   if v.get("large_speedup") and v.get("small_speedup")
+                   and v["large_speedup"] > v["small_speedup"] * 1.1)
+    degraded = sum(1 for _, v in ok
+                   if v.get("large_speedup") and v.get("small_speedup")
+                   and v["large_speedup"] < v["small_speedup"] * 0.9)
+    stable = len(lg_spds) - improved - degraded if lg_spds else 0
 
     cat_items = [
-        f"Heavy (>100ms): {len(heavy_compute)} kernels",
-        f"Medium (1-100ms): {len(medium)} kernels",
-        f"Light (<1ms): {len(light)} kernels",
+        f"Improved at large size: {improved} kernels",
+        f"Stable (within 10%): {stable} kernels",
+        f"Degraded at large size: {degraded} kernels",
     ]
     add_bullet_list(slide, stats_x, Inches(3.5), Inches(3.6), Inches(1.5),
                     cat_items, font_size=10, color=DARK_TEXT)
@@ -3051,10 +3054,15 @@ def slide_15b_large_size_benchmark(prs):
     run.font.name = FONT_BODY
     run.font.color.rgb = ACCENT_GREEN
     run2 = p.add_run()
-    run2.text = (f"At 8x sizes, Triton kernels do {sorted(lg_times)[len(lg_times)//2]/sorted(sm_times)[len(sm_times)//2]:.0f}x more compute "
-                 f"(median {sorted(sm_times)[len(sm_times)//2]:.3f}ms → {sorted(lg_times)[len(lg_times)//2]:.3f}ms). "
-                 f"{faster} kernels actually got FASTER due to better GPU occupancy and kernel launch amortization. "
-                 f"This validates that the generated Triton code scales correctly to real workloads.")
+    if lg_spds:
+        lg_sorted = sorted(lg_spds)
+        sm_sorted = sorted(sm_spds) if sm_spds else [0]
+        run2.text = (f"At scaled sizes, median speedup changes from {sm_sorted[len(sm_sorted)//2]:.1f}x to "
+                     f"{lg_sorted[len(lg_sorted)//2]:.1f}x. "
+                     f"{len(lg_gt1)}/{len(lg_spds)} kernels show GPU speedup at realistic sizes. "
+                     f"{improved} kernels improve, validating that generated Triton code scales to real workloads.")
+    else:
+        run2.text = "C reference benchmarks not available. Run benchmark_large_sizes.py to generate."
     run2.font.size = Pt(10)
     run2.font.name = FONT_BODY
     run2.font.color.rgb = DARK_TEXT
@@ -3230,6 +3238,21 @@ def slide_17_large_size_ablation(prs):
     with open(ablation_file) as f:
         ablation = json.load(f)
 
+    # Cross-reference small-size pass/fail to flag invalid large-size results
+    wa_sm_file = os.path.join(results_dir, "results.json")
+    na_sm_file = os.path.join(results_dir, "results_no_analysis.json")
+    wa_sm_pass, na_sm_pass = set(), set()
+    if os.path.exists(wa_sm_file):
+        with open(wa_sm_file) as f:
+            for k, v in json.load(f).items():
+                if v.get("test_passed"):
+                    wa_sm_pass.add(k)
+    if os.path.exists(na_sm_file):
+        with open(na_sm_file) as f:
+            for k, v in json.load(f).items():
+                if v.get("test_passed"):
+                    na_sm_pass.add(k)
+
     # Build table: Kernel | Scale | WA Large ms | NA Large ms | WA/NA Ratio | Winner
     rows = [["Kernel", "Scale", "WA Large (ms)", "NA Large (ms)", "WA/NA", "Winner"]]
 
@@ -3245,20 +3268,33 @@ def slide_17_large_size_ablation(prs):
         na_lg = d.get("na_large_triton_ms")
         winner = d.get("winner", "?")
 
+        # Mark results from code that failed small-size validation as invalid
+        wa_valid = kname in wa_sm_pass
+        na_valid = kname in na_sm_pass
+
         wa_str = f"{wa_lg:.3f}" if wa_lg is not None else d.get("wa_large_error", "ERR")[:12]
         na_str = f"{na_lg:.3f}" if na_lg is not None else d.get("na_large_error", "ERR")[:12]
+        if wa_lg is not None and not wa_valid:
+            wa_str += "*"
+        if na_lg is not None and not na_valid:
+            na_str += "*"
 
         ratio_str = ""
         if wa_lg is not None and na_lg is not None and na_lg > 0:
-            ratio = wa_lg / na_lg
-            ratio_str = f"{ratio:.2f}x"
-            both_ok += 1
-            if winner == "WA":
-                wa_wins += 1
-            elif winner == "NA":
-                na_wins += 1
+            if wa_valid and na_valid:
+                ratio = wa_lg / na_lg
+                ratio_str = f"{ratio:.2f}x"
+                both_ok += 1
+                if winner == "WA":
+                    wa_wins += 1
+                elif winner == "NA":
+                    na_wins += 1
+                else:
+                    ties += 1
             else:
-                ties += 1
+                ratio_str = "N/A"
+                winner = "WA-only" if wa_valid and not na_valid else (
+                    "NA-only" if na_valid and not wa_valid else "invalid")
 
         rows.append([kname, f"{scale}x", wa_str, na_str, ratio_str, winner])
 
@@ -3284,9 +3320,12 @@ def slide_17_large_size_ablation(prs):
                 "Large-Size Summary:",
                 font_size=13, bold=True, color=DARK_BLUE)
 
+    n_total = len(ablation)
+    wa_only = sum(1 for r in rows[1:] if r[5] in ("WA-only",))
     summary_items = [
-        f"Kernels compared: {both_ok} (both WA and NA completed at large size)",
-        f"WA wins (faster Triton): {wa_wins} | NA wins: {na_wins} | Ties (<5% diff): {ties}",
+        f"All {n_total} kernels attempted. Valid comparisons: {both_ok} (both pass small-size and complete large-size)",
+        f"WA wins (faster Triton): {wa_wins} | NA wins: {na_wins} | Ties (<5% diff): {ties} | WA-only: {wa_only}",
+        "* = code failed small-size validation (timing unreliable)",
     ]
 
     add_bullet_list(slide, Inches(0.5), summary_y + Inches(0.3), Inches(9.0), Inches(0.8),
