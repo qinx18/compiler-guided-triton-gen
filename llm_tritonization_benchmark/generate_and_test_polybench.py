@@ -472,6 +472,24 @@ def build_polybench_prompt(kernel_name: str, func_spec: dict) -> str:
                             section += (f"  - **Reduction on `{seq_dim}`**: vectorize with `tl.arange()` "
                                         f"and reduce with `tl.sum()`. Use **BLOCK_SIZE >= 128** for the "
                                         f"`{seq_dim}` dimension to maximize memory throughput.\n")
+                # Fix 7: When 1 valid dim + 2+ sequential dims, recommend fusing sequential dims into grid
+                all_dims = par_result.get('dims', [])
+                valid_dim_names_set = {o['parallel_dim'] for o in valid_opts}
+                seq_dim_names = [d for d in all_dims if d not in valid_dim_names_set]
+                n_seq_dims = len(seq_dim_names)
+                if len(valid_opts) == 1 and n_seq_dims >= 2:
+                    par_dim_name = valid_opts[0]['parallel_dim']
+                    seq_upper = ' * '.join(d.upper() for d in seq_dim_names)
+                    section += f"\n**CRITICAL: Fuse ALL sequential dimensions into the kernel grid.**\n"
+                    section += f"With {n_seq_dims + 1} loop dimensions and only `{par_dim_name}` parallelizable, "
+                    section += f"encode the sequential dims as part of the grid index:\n"
+                    section += f"```python\n"
+                    section += f"grid = ({seq_upper} * triton.cdiv({par_dim_name.upper()}, BLOCK),)\n"
+                    section += f"pid = tl.program_id(0)\n"
+                    section += f"# Decode sequential indices from pid\n"
+                    section += f"...\n"
+                    section += f"```\n"
+                    section += f"This launches one kernel call, not nested Python for-loops.\n"
                 # When both dims are freely parallelizable, recommend 2D grid
                 # Also handle N-D analysis where a single option has comma-separated dims
                 _multi_dim_opt = (len(valid_opts) == 1
@@ -631,6 +649,12 @@ def build_polybench_prompt(kernel_name: str, func_spec: dict) -> str:
                             section += "`tl.debug_barrier()` acts as a memory fence within the CTA, ensuring "
                             section += "vectorized stores are visible to subsequent vectorized loads. "
                             section += "Without it, loads may read stale L1 cache data.\n"
+                            section += "\n**WARNING: Do NOT split phases into separate kernel launches.** "
+                            section += "At larger problem sizes, launching 2 kernels per timestep × TSTEPS timesteps "
+                            section += "creates massive launch overhead (e.g., 80 launches for TSTEPS=40). "
+                            section += "Keep ALL timesteps and ALL phases inside a SINGLE kernel with `grid=(1,)`. "
+                            section += "Use `tl.debug_barrier()` between every phase boundary to ensure "
+                            section += "stores from phase 1 are visible to loads in phase 2.\n"
                         else:
                             # 2D+ problem (e.g., 3mm: E=A*B, F=C*D, G=E*F)
                             # → split into separate kernels, each CAN parallelize both dims
@@ -758,6 +782,13 @@ def build_polybench_prompt(kernel_name: str, func_spec: dict) -> str:
                                "- **Fuse element-wise phases** (e.g., `x[i] = x[i] + z[i]`) into the "
                                "preceding or following reduction kernel to minimize launch count. "
                                "Only split when phases have true data dependencies between them.\n")
+                    # Fix 8: When phases look like matrix multiplies, add tl.dot guidance
+                    if par_result.get('has_2d_arrays', False):
+                        section += "\n**For matrix-multiply phases**: Use 2D tiled grid `grid = (cdiv(M, BM), cdiv(N, BN))` "
+                        section += "with `tl.dot()` accumulation. Each block computes a BM×BN output tile by "
+                        section += "iterating over the K dimension: `for k in range(0, K, BK): acc += tl.dot(a_tile, b_tile)`.\n"
+                        section += "**IMPORTANT**: The host function MUST call these tiled phase kernels. "
+                        section += "Do NOT create an additional serial fallback kernel.\n"
                     analysis_sections.append(section)
                 elif par_result.get('source') == 'llvm':
                     # LLVM fallback: direction vectors confirm deps carried on all dims.
@@ -888,6 +919,18 @@ def build_polybench_prompt(kernel_name: str, func_spec: dict) -> str:
                             analysis_sections.append(f"\n{formatted}\n")
             except Exception:
                 pass
+
+        # Fix 6: General anti-patterns guidance (always appended when analysis is enabled)
+        anti_patterns = """
+## Common Mistakes to AVOID
+
+1. **NEVER use Python for-loops to launch many small kernels.** If you have sequential dims `r, q` and parallel dim `p`, do NOT write `for r in range(NR): for q in range(NQ): kernel[grid](...)`. Instead, fuse them: `grid = (NR * NQ * cdiv(NP, BLOCK),)` and inside the kernel compute `r = pid // (NQ * NP_blocks)`, `q = (pid // NP_blocks) % NQ`, `p_start = (pid % NP_blocks) * BLOCK`.
+
+2. **NEVER write parallel kernels then call a serial fallback.** If you write tiled/vectorized phase kernels (e.g., `phase1_kernel`, `phase2_kernel`), the host function MUST call them. Do NOT add a serial `grid=(1,)` wrapper that ignores the parallel implementations.
+
+3. **Use `tl.dot()` for ALL matrix multiply and outer-product accumulations.** NEVER use scalar triple-nested loops (`for i: for j: for k: acc += a[i,k]*b[k,j]`) inside a Triton kernel. Tile with BLOCK_SIZE and use `acc += tl.dot(a_tile, b_tile)`.
+"""
+        analysis_sections.append(anti_patterns)
 
     analysis_text = "\n".join(analysis_sections)
 
@@ -1751,6 +1794,7 @@ def run_test(kernel_name: str, test_file: Path) -> Tuple[bool, dict]:
 
 def compile_c_at_scale(kernel_name: str, params: dict) -> Optional[str]:
     """Compile C kernel with overridden size defines for scaled sizes. Returns .so path or None."""
+    import tempfile
     c_name = kernel_name.replace("-", "_")
     c_file = Path(POLYBENCH_KERNELS_DIR) / f"{c_name}.c"
     if not c_file.exists():
@@ -1760,12 +1804,29 @@ def compile_c_at_scale(kernel_name: str, params: dict) -> Optional[str]:
     so_file = lib_dir / f"lib{c_name}.so"
     if so_file.exists():
         return str(so_file)
+    # Strip source-level #define lines for params (they override -D flags)
+    source = c_file.read_text()
+    param_names = set(params.keys())
+    lines = source.split('\n')
+    filtered = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith('#define'):
+            parts = stripped.split()
+            if len(parts) >= 2 and parts[1] in param_names:
+                continue  # skip this #define, will use -D flag instead
+        filtered.append(line)
+    # Write modified source to temp file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.c', delete=False) as tmp:
+        tmp.write('\n'.join(filtered))
+        tmp_path = tmp.name
     d_flags = [f"-D{k}={v}" for k, v in params.items()]
     result = subprocess.run(
         ["/usr/local/bin/clang", "-shared", "-fPIC", "-O2"] + d_flags +
-        ["-o", str(so_file), str(c_file), "-lm"],
+        ["-o", str(so_file), tmp_path, "-lm"],
         capture_output=True, text=True, timeout=30
     )
+    os.unlink(tmp_path)
     return str(so_file) if result.returncode == 0 else None
 
 

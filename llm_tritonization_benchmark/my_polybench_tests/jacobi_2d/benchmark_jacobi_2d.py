@@ -10,20 +10,20 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton.jacobi_2d.attempt1 import jacobi_2d_triton
+    from polybench_results_scale8x.llm_triton.jacobi_2d.attempt1 import jacobi_2d_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "libjacobi_2d.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "libjacobi_2d.so"
 
 def run_c_reference(A_c, B_c, N, TSTEPS):
     lib = ctypes.CDLL(str(C_LIB_PATH))
-    CType_A = ctypes.c_float * (90 * 90)
+    CType_A = ctypes.c_float * (720 * 720)
     c_arr_A = CType_A.in_dll(lib, 'A')
     src_A = np.ascontiguousarray(A_c, dtype=np.float32)
     ctypes.memmove(c_arr_A, src_A.ctypes.data, src_A.nbytes)
-    CType_B = ctypes.c_float * (90 * 90)
+    CType_B = ctypes.c_float * (720 * 720)
     c_arr_B = CType_B.in_dll(lib, 'B')
     src_B = np.ascontiguousarray(B_c, dtype=np.float32)
     ctypes.memmove(c_arr_B, src_B.ctypes.data, src_B.nbytes)
@@ -32,20 +32,20 @@ def run_c_reference(A_c, B_c, N, TSTEPS):
     func.argtypes = []
     func.restype = None
     func()
-    CType_A = ctypes.c_float * (90 * 90)
+    CType_A = ctypes.c_float * (720 * 720)
     c_arr_A = CType_A.in_dll(lib, 'A')
-    A_c[:] = np.frombuffer(c_arr_A, dtype=np.float32).reshape(90, 90).copy()
-    CType_B = ctypes.c_float * (90 * 90)
+    A_c[:] = np.frombuffer(c_arr_A, dtype=np.float32).reshape(720, 720).copy()
+    CType_B = ctypes.c_float * (720 * 720)
     c_arr_B = CType_B.in_dll(lib, 'B')
-    B_c[:] = np.frombuffer(c_arr_B, dtype=np.float32).reshape(90, 90).copy()
+    B_c[:] = np.frombuffer(c_arr_B, dtype=np.float32).reshape(720, 720).copy()
 
 def benchmark():
     num_warmup = 5
     num_iterations = 50
 
-    A = torch.randn(90, 90, device='cuda', dtype=torch.float32)
-    B = torch.randn(90, 90, device='cuda', dtype=torch.float32)
-    N = 90
+    A = torch.randn(720, 720, device='cuda', dtype=torch.float32)
+    B = torch.randn(720, 720, device='cuda', dtype=torch.float32)
+    N = 720
     TSTEPS = 40
 
     # C reference benchmark

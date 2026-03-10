@@ -1,0 +1,378 @@
+{
+  "2mm": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 10,
+    "final_attempt": 9,
+    "benchmark": {
+      "c_ref_time_ms": 160.600491,
+      "triton_time_ms": 2249.254508,
+      "speedup": 0.071402
+    },
+    "final_error": null
+  },
+  "3mm": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 289.564021,
+      "triton_time_ms": 0.158569,
+      "speedup": 1826.104669
+    },
+    "final_attempt": 1
+  },
+  "adi": {
+    "triton_generated": true,
+    "test_passed": false,
+    "attempts": 10,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=2.981186e-03 rel_error=5.295238e-04",
+      "max_error": "2.981186e-03"
+    }
+  },
+  "atax": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 1.549947,
+      "triton_time_ms": 0.212055,
+      "speedup": 7.309183
+    },
+    "final_attempt": 1
+  },
+  "bicg": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 1.780008,
+      "triton_time_ms": 0.282212,
+      "speedup": 6.307334
+    },
+    "final_attempt": 1
+  },
+  "cholesky": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": null,
+    "final_attempt": 1
+  },
+  "correlation": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=1.061082e-03 rel_error=9.880987e-04",
+      "max_error": "1.061082e-03"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 192.63546,
+      "triton_time_ms": 3.880964,
+      "speedup": 49.635988
+    },
+    "final_attempt": 2
+  },
+  "covariance": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 201.051014,
+      "triton_time_ms": 295.448047,
+      "speedup": 0.680495
+    },
+    "final_attempt": 1
+  },
+  "deriche": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 5,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 17:9:\n):\n    # Calculate coefficients\n    exp_neg_alpha = tl.exp(-alpha)\n    exp_neg_2alpha = tl.exp(-2.0 * alpha)\n    exp_2alpha = tl.exp(2.0 * alpha)\n\n    k = (1.0 - exp_neg_alpha) * (1.0 - exp_neg_alpha) / (1.0 + 2.0 * alpha * exp_neg_alpha - exp_2alpha)\n    a1 = k\n    a2 = k * exp_neg_alpha * (alpha - 1.0)\n    a3 = k * exp_neg_alpha * (alpha + 1.0)\n    a4 = -k * exp_neg_2alpha\n    b1 = 2.0 ** (-alpha)\n         ^\nAttributeError(\"'tensor' object has no attribute '__rpow__'\")\n  Test 2: ERROR - at 17:9:\n):\n    # Calculate coefficients\n    exp_neg_alpha = tl.exp(-alpha)\n    exp_neg_2alpha = tl.exp(-2.0 * alpha)\n    exp_2alpha = tl.exp(2.0 * alpha)\n\n    k = (1.0 - exp_neg_alpha) * (1.0 - exp_neg_alpha) / (1.0 + 2.0 * alpha * exp_neg_alpha - exp_2alpha)\n    a1 = k\n    a2 = k * exp_neg_alpha * (alpha - 1.0)\n    a3 = k * exp_neg_alpha * (alpha + 1.0)\n    a4 = -k * exp_neg_2alpha\n    b1 = 2.0 ** (-alpha)\n         ^\nAttributeError(\"'tensor' object has no attribute '__rpow__'\")\n  Test 3: ERROR - at 17:9:\n):\n    # Calculate coefficients\n    exp_neg_alpha = tl.exp(-alpha)\n    exp_neg_2alpha = tl.exp(-2.0 * alpha)\n    exp_2alpha = tl.exp(2.0 * alpha)\n\n    k = (1.0 - exp_neg_alpha) * (1.0 - exp_neg_alpha) / (1.0 + 2.0 * alpha * exp_neg_alpha - exp_2alpha)\n    a1 = k\n    a2 = k * exp_neg_alpha * (alpha - 1.0)\n    a3 = k * exp_neg_alpha * (alpha + 1.0)\n    a4 = -k * exp_neg_2alpha\n    b1 = 2.0 ** (-alpha)\n         ^\nAttributeError(\"'tensor' object has no attribute '__rpow__'\")\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 60.582626,
+      "triton_time_ms": 2.118463,
+      "speedup": 28.597449
+    },
+    "final_attempt": 5
+  },
+  "doitgen": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 15:21:\n\n    # Calculate offsets for p dimension\n    p_offsets = pid_p * BLOCK_P + tl.arange(0, BLOCK_P)\n    p_mask = p_offsets < NP\n\n    # Initialize sum values to 0\n    sum_vals = tl.zeros([BLOCK_P], dtype=tl.float32)\n\n    # Compute sum[p] = sum over s of A[r][q][s] * C4[s][p]\n    for s in range(NP):\n        # Load A[r][q][s] - this is a scalar for all p values\n        a_idx = r * (NQ * NP) + q * NP + s\n                     ^\nNameError('NQ is not defined')\n  Test 2: ERROR - at 15:21:\n\n    # Calculate offsets for p dimension\n    p_offsets = pid_p * BLOCK_P + tl.arange(0, BLOCK_P)\n    p_mask = p_offsets < NP\n\n    # Initialize sum values to 0\n    sum_vals = tl.zeros([BLOCK_P], dtype=tl.float32)\n\n    # Compute sum[p] = sum over s of A[r][q][s] * C4[s][p]\n    for s in range(NP):\n        # Load A[r][q][s] - this is a scalar for all p values\n        a_idx = r * (NQ * NP) + q * NP + s\n                     ^\nNameError('NQ is not defined')\n  Test 3: ERROR - at 15:21:\n\n    # Calculate offsets for p dimension\n    p_offsets = pid_p * BLOCK_P + tl.arange(0, BLOCK_P)\n    p_mask = p_offsets < NP\n\n    # Initialize sum values to 0\n    sum_vals = tl.zeros([BLOCK_P], dtype=tl.float32)\n\n    # Compute sum[p] = sum over s of A[r][q][s] * C4[s][p]\n    for s in range(NP):\n        # Load A[r][q][s] - this is a scalar for all p values\n        a_idx = r * (NQ * NP) + q * NP + s\n                     ^\nNameError('NQ is not defined')\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 1821.713142,
+      "triton_time_ms": 1202.002324,
+      "speedup": 1.515565
+    },
+    "final_attempt": 2
+  },
+  "durbin": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 9,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=3.113293e+01 rel_error=1.276515e+01",
+      "max_error": "3.113293e+01"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.708518,
+      "triton_time_ms": 1.930836,
+      "speedup": 0.366949
+    },
+    "final_attempt": 9
+  },
+  "fdtd_2d": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 15.55927,
+      "triton_time_ms": 20.50706,
+      "speedup": 0.758727
+    },
+    "final_attempt": 1
+  },
+  "floyd_warshall": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 482.26784,
+      "triton_time_ms": 10.169253,
+      "speedup": 47.424115
+    },
+    "final_attempt": 1
+  },
+  "gemm": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 29.409028,
+      "triton_time_ms": 0.222119,
+      "speedup": 132.402282
+    },
+    "final_attempt": 1
+  },
+  "gemver": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 22:8:\n            j_indices = j_start + j_offsets\n            mask = j_indices < N\n\n            A_indices = j_indices * N + i\n            A_vals = tl.load(A + A_indices, mask=mask)\n            y_block = tl.load(y + j_indices, mask=mask)\n\n            products = beta * A_vals * y_block\n            x_acc += tl.sum(products)\n\n        x_old = tl.load(x + i)\n        tl.store(x + i, x_old + x_acc)\n        ^\n  Test 2: ERROR - at 22:8:\n            j_indices = j_start + j_offsets\n            mask = j_indices < N\n\n            A_indices = j_indices * N + i\n            A_vals = tl.load(A + A_indices, mask=mask)\n            y_block = tl.load(y + j_indices, mask=mask)\n\n            products = beta * A_vals * y_block\n            x_acc += tl.sum(products)\n\n        x_old = tl.load(x + i)\n        tl.store(x + i, x_old + x_acc)\n        ^\n  Test 3: ERROR - at 22:8:\n            j_indices = j_start + j_offsets\n            mask = j_indices < N\n\n            A_indices = j_indices * N + i\n            A_vals = tl.load(A + A_indices, mask=mask)\n            y_block = tl.load(y + j_indices, mask=mask)\n\n            products = beta * A_vals * y_block\n            x_acc += tl.sum(products)\n\n        x_old = tl.load(x + i)\n        tl.store(x + i, x_old + x_acc)\n        ^\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 5.993738,
+      "triton_time_ms": 0.147919,
+      "speedup": 40.520475
+    },
+    "final_attempt": 2
+  },
+  "gesummv": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 3.421052,
+      "triton_time_ms": 0.116558,
+      "speedup": 29.350733
+    },
+    "final_attempt": 1
+  },
+  "gramschmidt": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 257.26657,
+      "triton_time_ms": 630.185964,
+      "speedup": 0.408239
+    },
+    "final_attempt": 1
+  },
+  "heat_3d": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 3185.669631,
+      "triton_time_ms": 12.853583,
+      "speedup": 247.842923
+    },
+    "final_attempt": 1
+  },
+  "jacobi_1d": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 9,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=1.409524e+00 rel_error=1.450388e+00",
+      "max_error": "1.409524e+00"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 0.128309,
+      "triton_time_ms": 0.940218,
+      "speedup": 0.136467
+    },
+    "final_attempt": 9
+  },
+  "jacobi_2d": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 35.020179,
+      "triton_time_ms": 32.701793,
+      "speedup": 1.070895
+    },
+    "final_attempt": 1
+  },
+  "lu": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 41:36:\n            tl.store(A + A_i_base + j_offsets, final_A_i_j, mask=j_mask)\n\n        # Phase 2: j >= i\n        j_mask2 = j_offsets >= i\n        j_mask2 = j_mask2 & (j_offsets < N)\n\n        if i > 0:\n            # Compute A[i][j] -= sum(A[i][k] * A[k][j] for k in range(i))\n            result2 = tl.zeros([BLOCK_SIZE], dtype=tl.float32)\n\n            for k in range(i):\n                A_i_k = tl.load(A + A_i_base + k)\n                                    ^\nNameError('A_i_base is not defined')\n  Test 2: ERROR - at 41:36:\n            tl.store(A + A_i_base + j_offsets, final_A_i_j, mask=j_mask)\n\n        # Phase 2: j >= i\n        j_mask2 = j_offsets >= i\n        j_mask2 = j_mask2 & (j_offsets < N)\n\n        if i > 0:\n            # Compute A[i][j] -= sum(A[i][k] * A[k][j] for k in range(i))\n            result2 = tl.zeros([BLOCK_SIZE], dtype=tl.float32)\n\n            for k in range(i):\n                A_i_k = tl.load(A + A_i_base + k)\n                                    ^\nNameError('A_i_base is not defined')\n  Test 3: ERROR - at 41:36:\n            tl.store(A + A_i_base + j_offsets, final_A_i_j, mask=j_mask)\n\n        # Phase 2: j >= i\n        j_mask2 = j_offsets >= i\n        j_mask2 = j_mask2 & (j_offsets < N)\n\n        if i > 0:\n            # Compute A[i][j] -= sum(A[i][k] * A[k][j] for k in range(i))\n            result2 = tl.zeros([BLOCK_SIZE], dtype=tl.float32)\n\n            for k in range(i):\n                A_i_k = tl.load(A + A_i_base + k)\n                                    ^\nNameError('A_i_base is not defined')\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 342.777541,
+      "triton_time_ms": 185.487083,
+      "speedup": 1.847986
+    },
+    "final_attempt": 2
+  },
+  "ludcmp": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 5:27:\ndef ludcmp_kernel(A_ptr, b_ptr, x_ptr, y_ptr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):\n    # LU decomposition - sequential in i due to dependencies\n    for i in range(N):\n        # First loop: j < i, parallelized across blocks\n        num_blocks_lower = triton.cdiv(i, BLOCK_SIZE)\n                           ^\nValueError('Did you forget to add @triton.jit ? (`_builder` argument must be provided outside of JIT functions.)')\n  Test 2: ERROR - at 5:27:\ndef ludcmp_kernel(A_ptr, b_ptr, x_ptr, y_ptr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):\n    # LU decomposition - sequential in i due to dependencies\n    for i in range(N):\n        # First loop: j < i, parallelized across blocks\n        num_blocks_lower = triton.cdiv(i, BLOCK_SIZE)\n                           ^\nValueError('Did you forget to add @triton.jit ? (`_builder` argument must be provided outside of JIT functions.)')\n  Test 3: ERROR - at 5:27:\ndef ludcmp_kernel(A_ptr, b_ptr, x_ptr, y_ptr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):\n    # LU decomposition - sequential in i due to dependencies\n    for i in range(N):\n        # First loop: j < i, parallelized across blocks\n        num_blocks_lower = triton.cdiv(i, BLOCK_SIZE)\n                           ^\nValueError('Did you forget to add @triton.jit ? (`_builder` argument must be provided outside of JIT functions.)')\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 319.796046,
+      "triton_time_ms": 350.56998,
+      "speedup": 0.912217
+    },
+    "final_attempt": 2
+  },
+  "mvt": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 4.313086,
+      "triton_time_ms": 0.083047,
+      "speedup": 51.935319
+    },
+    "final_attempt": 1
+  },
+  "nussinov": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": null,
+    "final_attempt": 1
+  },
+  "seidel_2d": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": null,
+    "final_attempt": 1
+  },
+  "symm": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 2,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - at 18:8:\n    # Get column index for this thread block\n    j_block_start = tl.program_id(0) * BLOCK_SIZE\n    j_offsets = j_block_start + tl.arange(0, BLOCK_SIZE)\n    j_mask = j_offsets < N\n\n    # Sequential loop over rows\n    for i in range(M):\n        # Compute temp2 using reduction\n        temp2 = 0.0\n\n        # Inner k loop for k < i\n        for k in range(i):\n        ^\nAssertionError('Loop-carried variable temp2 has initial type fp32 but is re-assigned to <[64], fp32> in loop! Please make sure that the type stays consistent.')\n  Test 2: ERROR - at 18:8:\n    # Get column index for this thread block\n    j_block_start = tl.program_id(0) * BLOCK_SIZE\n    j_offsets = j_block_start + tl.arange(0, BLOCK_SIZE)\n    j_mask = j_offsets < N\n\n    # Sequential loop over rows\n    for i in range(M):\n        # Compute temp2 using reduction\n        temp2 = 0.0\n\n        # Inner k loop for k < i\n        for k in range(i):\n        ^\nAssertionError('Loop-carried variable temp2 has initial type fp32 but is re-assigned to <[64], fp32> in loop! Please make sure that the type stays consistent.')\n  Test 3: ERROR - at 18:8:\n    # Get column index for this thread block\n    j_block_start = tl.program_id(0) * BLOCK_SIZE\n    j_offsets = j_block_start + tl.arange(0, BLOCK_SIZE)\n    j_mask = j_offsets < N\n\n    # Sequential loop over rows\n    for i in range(M):\n        # Compute temp2 using reduction\n        temp2 = 0.0\n\n        # Inner k loop for k < i\n        for k in range(i):\n        ^\nAssertionError('Loop-carried variable temp2 has initial type fp32 but is re-assigned to <[64], fp32> in loop! Please make sure that the type stays consistent.')\nSome tests FAILED!\n"
+    },
+    "benchmark": {
+      "c_ref_time_ms": 141.484859,
+      "triton_time_ms": 16.805962,
+      "speedup": 8.41873
+    },
+    "final_attempt": 2
+  },
+  "syr2k": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 119.398097,
+      "triton_time_ms": 0.853191,
+      "speedup": 139.942929
+    },
+    "final_attempt": 1
+  },
+  "syrk": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 49.092025,
+      "triton_time_ms": 2.174919,
+      "speedup": 22.571886
+    },
+    "final_attempt": 1
+  },
+  "trisolv": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 4.880799,
+      "triton_time_ms": 12.08884,
+      "speedup": 0.403744
+    },
+    "final_attempt": 1
+  },
+  "trmm": {
+    "triton_generated": true,
+    "test_passed": true,
+    "attempts": 1,
+    "final_error": null,
+    "benchmark": {
+      "c_ref_time_ms": 87.669148,
+      "triton_time_ms": 4.581421,
+      "speedup": 19.1358
+    },
+    "final_attempt": 1
+  }
+}

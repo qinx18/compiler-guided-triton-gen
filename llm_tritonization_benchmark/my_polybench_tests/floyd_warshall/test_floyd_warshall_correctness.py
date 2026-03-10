@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for floyd_warshall (Polybench) - attempt 1"""
+"""Correctness test for floyd_warshall (Polybench) - attempt 2"""
 import sys
 import ctypes
 import numpy as np
@@ -10,13 +10,13 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.floyd_warshall.attempt1 import floyd_warshall_triton
+    from polybench_results_scale8x.llm_triton_no_analysis.floyd_warshall.attempt2 import floyd_warshall_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
 # Load C reference
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "libfloyd_warshall.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "libfloyd_warshall.so"
 if not C_LIB_PATH.exists():
     print(f"C reference library not found: {C_LIB_PATH}")
     sys.exit(1)
@@ -26,7 +26,7 @@ def run_c_reference(path_c, N):
     lib = ctypes.CDLL(str(C_LIB_PATH))
 
     # Set global arrays in the .so
-    CType_path = ctypes.c_float * (120 * 120)
+    CType_path = ctypes.c_float * (960 * 960)
     c_arr_path = CType_path.in_dll(lib, 'path')
     src_path = np.ascontiguousarray(path_c, dtype=np.float32)
     ctypes.memmove(c_arr_path, src_path.ctypes.data, src_path.nbytes)
@@ -41,9 +41,9 @@ def run_c_reference(path_c, N):
     func()
 
     # Read back output arrays
-    CType_path = ctypes.c_float * (120 * 120)
+    CType_path = ctypes.c_float * (960 * 960)
     c_arr_path = CType_path.in_dll(lib, 'path')
-    path_c[:] = np.frombuffer(c_arr_path, dtype=np.float32).reshape(120, 120).copy()
+    path_c[:] = np.frombuffer(c_arr_path, dtype=np.float32).reshape(960, 960).copy()
 
 def test_correctness():
     """Test Triton vs C reference."""
@@ -54,8 +54,8 @@ def test_correctness():
         try:
             # Initialize arrays
             # Non-negative edge weights for shortest-path
-            path = torch.abs(torch.randn(120, 120, device='cuda', dtype=torch.float32)) * 10.0 + 1.0
-            N = 120
+            path = torch.abs(torch.randn(960, 960, device='cuda', dtype=torch.float32)) * 10.0 + 1.0
+            N = 960
 
             # Clone for C reference
             path_c = path.cpu().numpy().copy()

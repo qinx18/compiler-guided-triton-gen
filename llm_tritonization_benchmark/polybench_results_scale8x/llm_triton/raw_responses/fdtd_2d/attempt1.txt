@@ -1,0 +1,264 @@
+# LLM-Generated Triton Implementation for fdtd_2d (Polybench)
+# Generated: 2026-03-09 13:48:18
+# Model: claude-sonnet-4-20250514
+
+================================================================================
+PROMPT:
+================================================================================
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define TMAX 20
+#define NX 60
+#define NY 80
+
+float _fict_[TMAX];
+float ex[NX][NY];
+float ey[NX][NY];
+float hz[NX][NY];
+
+void fdtd_2d_kernel() {
+  int t, i, j;
+#pragma scop
+  for(t = 0; t < TMAX; t++)
+    {
+      for (j = 0; j < NY; j++)
+	ey[0][j] = _fict_[t];
+      for (i = 1; i < NX; i++)
+	for (j = 0; j < NY; j++)
+	  ey[i][j] = ey[i][j] - 0.5*(hz[i][j]-hz[i-1][j]);
+      for (i = 0; i < NX; i++)
+	for (j = 1; j < NY; j++)
+	  ex[i][j] = ex[i][j] - 0.5*(hz[i][j]-hz[i][j-1]);
+      for (i = 0; i < NX - 1; i++)
+	for (j = 0; j < NY - 1; j++)
+	  hz[i][j] = hz[i][j] - 0.7*  (ex[i][j+1] - ex[i][j] +
+				       ey[i+1][j] - ey[i][j]);
+    }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for(t = 0; t < TMAX; t++)
+    {
+      for (j = 0; j < NY; j++)
+	ey[0][j] = _fict_[t];
+      for (i = 1; i < NX; i++)
+	for (j = 0; j < NY; j++)
+	  ey[i][j] = ey[i][j] - 0.5*(hz[i][j]-hz[i-1][j]);
+      for (i = 0; i < NX; i++)
+	for (j = 1; j < NY; j++)
+	  ex[i][j] = ex[i][j] - 0.5*(hz[i][j]-hz[i][j-1]);
+      for (i = 0; i < NX - 1; i++)
+	for (j = 0; j < NY - 1; j++)
+	  hz[i][j] = hz[i][j] - 0.7*  (ex[i][j+1] - ex[i][j] +
+				       ey[i+1][j] - ey[i][j]);
+    }
+```
+
+## Parallelization Analysis
+
+**Loop dimensions**: ['t', 'j', 'i']
+
+- Parallelize `t`, sequential `j`: INVALID
+  - `t` is a sequential context loop (e.g. timestep) — must remain sequential
+
+- Parallelize `j`, sequential `t`: VALID
+
+- Parallelize `i`, sequential `t`: VALID
+
+**Both `j` and `i` are freely parallelizable.** Use a 2D grid to parallelize both simultaneously for best GPU occupancy.
+
+**CRITICAL: Timestep/phase structure**: Use `grid=(1,)` with the `t` loop **INSIDE** the kernel. This puts everything in a single kernel launch, avoiding kernel launch overhead entirely.
+```python
+kernel[grid=(1,)](...)  # ONE kernel launch — t loop inside
+```
+With `grid=(1,)` (single thread block), the `t` loop inside the kernel is correct — there are no cross-CTA race conditions because there is only one CTA. All phases execute sequentially within each timestep, and the `t` loop iterates normally.
+
+**Inside the kernel**: Use 2D tiling to process all elements:
+```python
+for t in range(TSTEPS):
+    for row_start in range(0, N_ROWS, BLOCK_ROW):
+        for col_start in range(0, N_COLS, BLOCK_COL):
+            # vectorize within each tile
+```
+Process all phases for each timestep sequentially within the kernel. Vectorize the column dimension with `tl.arange(0, BLOCK_COL)`.
+
+
+## Array Information:
+- `_fict_`: read-only
+- `ex`: read-write
+- `ey`: read-write
+- `hz`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `NX` = 480
+- `NY` = 640
+- `TMAX` = 20
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `fdtd_2d_kernel`
+2. Includes a Python wrapper function named `fdtd_2d_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def fdtd_2d_triton(_fict_, ex, ey, hz, NX, NY, TMAX):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+================================================================================
+RESPONSE:
+================================================================================
+```python
+import triton
+import triton.language as tl
+
+@triton.jit
+def fdtd_2d_kernel(_fict_, ex, ey, hz, NX: tl.constexpr, NY: tl.constexpr, TMAX: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    # Define offsets once at the start
+    offsets = tl.arange(0, BLOCK_SIZE)
+    
+    # Time loop (sequential)
+    for t in range(TMAX):
+        # Phase 1: ey[0][j] = _fict_[t]
+        for j_start in range(0, NY, BLOCK_SIZE):
+            j_offsets = j_start + offsets
+            j_mask = j_offsets < NY
+            
+            # Load _fict_[t]
+            fict_val = tl.load(_fict_ + t)
+            
+            # Store to ey[0][j]
+            ey_ptr = ey + j_offsets  # ey[0][j] = 0 * NY + j
+            tl.store(ey_ptr, fict_val, mask=j_mask)
+        
+        # Phase 2: ey[i][j] = ey[i][j] - 0.5*(hz[i][j]-hz[i-1][j]) for i >= 1
+        for i in range(1, NX):
+            for j_start in range(0, NY, BLOCK_SIZE):
+                j_offsets = j_start + offsets
+                j_mask = j_offsets < NY
+                
+                # Linear indices
+                ey_indices = i * NY + j_offsets
+                hz_indices = i * NY + j_offsets
+                hz_prev_indices = (i - 1) * NY + j_offsets
+                
+                # Load values
+                ey_vals = tl.load(ey + ey_indices, mask=j_mask)
+                hz_vals = tl.load(hz + hz_indices, mask=j_mask)
+                hz_prev_vals = tl.load(hz + hz_prev_indices, mask=j_mask)
+                
+                # Compute and store
+                result = ey_vals - 0.5 * (hz_vals - hz_prev_vals)
+                tl.store(ey + ey_indices, result, mask=j_mask)
+        
+        # Phase 3: ex[i][j] = ex[i][j] - 0.5*(hz[i][j]-hz[i][j-1]) for j >= 1
+        for i in range(NX):
+            for j_start in range(1, NY, BLOCK_SIZE):
+                j_offsets = j_start + offsets
+                j_mask = j_offsets < NY
+                
+                # Linear indices
+                ex_indices = i * NY + j_offsets
+                hz_indices = i * NY + j_offsets
+                hz_prev_indices = i * NY + (j_offsets - 1)
+                
+                # Load values
+                ex_vals = tl.load(ex + ex_indices, mask=j_mask)
+                hz_vals = tl.load(hz + hz_indices, mask=j_mask)
+                hz_prev_vals = tl.load(hz + hz_prev_indices, mask=j_mask)
+                
+                # Compute and store
+                result = ex_vals - 0.5 * (hz_vals - hz_prev_vals)
+                tl.store(ex + ex_indices, result, mask=j_mask)
+        
+        # Phase 4: hz update for i < NX-1, j < NY-1
+        for i in range(NX - 1):
+            for j_start in range(0, NY - 1, BLOCK_SIZE):
+                j_offsets = j_start + offsets
+                j_mask = j_offsets < (NY - 1)
+                
+                # Linear indices for hz[i][j]
+                hz_indices = i * NY + j_offsets
+                
+                # Linear indices for ex[i][j+1] and ex[i][j]
+                ex_next_indices = i * NY + (j_offsets + 1)
+                ex_curr_indices = i * NY + j_offsets
+                
+                # Linear indices for ey[i+1][j] and ey[i][j]
+                ey_next_indices = (i + 1) * NY + j_offsets
+                ey_curr_indices = i * NY + j_offsets
+                
+                # Load values
+                hz_vals = tl.load(hz + hz_indices, mask=j_mask)
+                ex_next_vals = tl.load(ex + ex_next_indices, mask=j_mask)
+                ex_curr_vals = tl.load(ex + ex_curr_indices, mask=j_mask)
+                ey_next_vals = tl.load(ey + ey_next_indices, mask=j_mask)
+                ey_curr_vals = tl.load(ey + ey_curr_indices, mask=j_mask)
+                
+                # Compute and store
+                result = hz_vals - 0.7 * ((ex_next_vals - ex_curr_vals) + (ey_next_vals - ey_curr_vals))
+                tl.store(hz + hz_indices, result, mask=j_mask)
+
+def fdtd_2d_triton(_fict_, ex, ey, hz, NX, NY, TMAX):
+    BLOCK_SIZE = 128
+    
+    # Single kernel launch with t loop inside
+    fdtd_2d_kernel[1,](_fict_, ex, ey, hz, NX, NY, TMAX, BLOCK_SIZE)
+```

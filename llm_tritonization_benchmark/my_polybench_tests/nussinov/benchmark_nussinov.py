@@ -10,20 +10,20 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton.nussinov.attempt5 import nussinov_triton
+    from polybench_results_scale8x.llm_triton_no_analysis.nussinov.attempt1 import nussinov_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "libnussinov.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "libnussinov.so"
 
 def run_c_reference(seq_c, table_c, N):
     lib = ctypes.CDLL(str(C_LIB_PATH))
-    CType_seq = ctypes.c_int * (180)
+    CType_seq = ctypes.c_int * (1440)
     c_arr_seq = CType_seq.in_dll(lib, 'seq')
     src_seq = np.ascontiguousarray(seq_c.astype(np.int32), dtype=np.int32)
     ctypes.memmove(c_arr_seq, src_seq.ctypes.data, src_seq.nbytes)
-    CType_table = ctypes.c_int * (180 * 180)
+    CType_table = ctypes.c_int * (1440 * 1440)
     c_arr_table = CType_table.in_dll(lib, 'table')
     src_table = np.ascontiguousarray(table_c.astype(np.int32), dtype=np.int32)
     ctypes.memmove(c_arr_table, src_table.ctypes.data, src_table.nbytes)
@@ -32,18 +32,18 @@ def run_c_reference(seq_c, table_c, N):
     func.argtypes = []
     func.restype = None
     func()
-    CType_table = ctypes.c_int * (180 * 180)
+    CType_table = ctypes.c_int * (1440 * 1440)
     c_arr_table = CType_table.in_dll(lib, 'table')
-    table_c[:] = np.frombuffer(c_arr_table, dtype=np.int32).reshape(180, 180).astype(np.float32).copy()
+    table_c[:] = np.frombuffer(c_arr_table, dtype=np.int32).reshape(1440, 1440).astype(np.float32).copy()
 
 def benchmark():
     num_warmup = 5
     num_iterations = 50
 
     # Integer base sequence {0..3} and zero-initialized score table
-    seq = torch.randint(0, 4, (180,), device='cuda').float()
-    table = torch.zeros(180, 180, device='cuda', dtype=torch.float32)
-    N = 180
+    seq = torch.randint(0, 4, (1440,), device='cuda').float()
+    table = torch.zeros(1440, 1440, device='cuda', dtype=torch.float32)
+    N = 1440
 
     # C reference benchmark
     c_time = None

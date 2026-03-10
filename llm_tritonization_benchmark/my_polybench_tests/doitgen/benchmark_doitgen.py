@@ -10,24 +10,24 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton.doitgen.attempt1 import doitgen_triton
+    from polybench_results_scale8x.llm_triton_no_analysis.doitgen.attempt5 import doitgen_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "libdoitgen.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "libdoitgen.so"
 
 def run_c_reference(A_c, C4_c, sum_c, NP, NQ, NR):
     lib = ctypes.CDLL(str(C_LIB_PATH))
-    CType_A = ctypes.c_float * (25 * 20 * 30)
+    CType_A = ctypes.c_float * (200 * 160 * 240)
     c_arr_A = CType_A.in_dll(lib, 'A')
     src_A = np.ascontiguousarray(A_c, dtype=np.float32)
     ctypes.memmove(c_arr_A, src_A.ctypes.data, src_A.nbytes)
-    CType_C4 = ctypes.c_float * (30 * 30)
+    CType_C4 = ctypes.c_float * (240 * 240)
     c_arr_C4 = CType_C4.in_dll(lib, 'C4')
     src_C4 = np.ascontiguousarray(C4_c, dtype=np.float32)
     ctypes.memmove(c_arr_C4, src_C4.ctypes.data, src_C4.nbytes)
-    CType_sum = ctypes.c_float * (30)
+    CType_sum = ctypes.c_float * (240)
     c_arr_sum = CType_sum.in_dll(lib, 'sum')
     src_sum = np.ascontiguousarray(sum_c, dtype=np.float32)
     ctypes.memmove(c_arr_sum, src_sum.ctypes.data, src_sum.nbytes)
@@ -36,20 +36,20 @@ def run_c_reference(A_c, C4_c, sum_c, NP, NQ, NR):
     func.argtypes = []
     func.restype = None
     func()
-    CType_A = ctypes.c_float * (25 * 20 * 30)
+    CType_A = ctypes.c_float * (200 * 160 * 240)
     c_arr_A = CType_A.in_dll(lib, 'A')
-    A_c[:] = np.frombuffer(c_arr_A, dtype=np.float32).reshape(25, 20, 30).copy()
+    A_c[:] = np.frombuffer(c_arr_A, dtype=np.float32).reshape(200, 160, 240).copy()
 
 def benchmark():
     num_warmup = 5
     num_iterations = 50
 
-    A = torch.randn(25, 20, 30, device='cuda', dtype=torch.float32)
-    C4 = torch.randn(30, 30, device='cuda', dtype=torch.float32)
-    sum = torch.randn(30, device='cuda', dtype=torch.float32)
-    NP = 30
-    NQ = 20
-    NR = 25
+    A = torch.randn(200, 160, 240, device='cuda', dtype=torch.float32)
+    C4 = torch.randn(240, 240, device='cuda', dtype=torch.float32)
+    sum = torch.randn(240, device='cuda', dtype=torch.float32)
+    NP = 240
+    NQ = 160
+    NR = 200
 
     # C reference benchmark
     c_time = None

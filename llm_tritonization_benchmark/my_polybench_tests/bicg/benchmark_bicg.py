@@ -10,32 +10,32 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton.bicg.attempt1 import bicg_triton
+    from polybench_results_scale8x.llm_triton_no_analysis.bicg.attempt1 import bicg_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "libbicg.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "libbicg.so"
 
 def run_c_reference(A_c, p_c, q_c, r_c, s_c, M, N):
     lib = ctypes.CDLL(str(C_LIB_PATH))
-    CType_A = ctypes.c_float * (85 * 75)
+    CType_A = ctypes.c_float * (680 * 600)
     c_arr_A = CType_A.in_dll(lib, 'A')
     src_A = np.ascontiguousarray(A_c, dtype=np.float32)
     ctypes.memmove(c_arr_A, src_A.ctypes.data, src_A.nbytes)
-    CType_p = ctypes.c_float * (75)
+    CType_p = ctypes.c_float * (600)
     c_arr_p = CType_p.in_dll(lib, 'p')
     src_p = np.ascontiguousarray(p_c, dtype=np.float32)
     ctypes.memmove(c_arr_p, src_p.ctypes.data, src_p.nbytes)
-    CType_q = ctypes.c_float * (85)
+    CType_q = ctypes.c_float * (680)
     c_arr_q = CType_q.in_dll(lib, 'q')
     src_q = np.ascontiguousarray(q_c, dtype=np.float32)
     ctypes.memmove(c_arr_q, src_q.ctypes.data, src_q.nbytes)
-    CType_r = ctypes.c_float * (85)
+    CType_r = ctypes.c_float * (680)
     c_arr_r = CType_r.in_dll(lib, 'r')
     src_r = np.ascontiguousarray(r_c, dtype=np.float32)
     ctypes.memmove(c_arr_r, src_r.ctypes.data, src_r.nbytes)
-    CType_s = ctypes.c_float * (75)
+    CType_s = ctypes.c_float * (600)
     c_arr_s = CType_s.in_dll(lib, 's')
     src_s = np.ascontiguousarray(s_c, dtype=np.float32)
     ctypes.memmove(c_arr_s, src_s.ctypes.data, src_s.nbytes)
@@ -44,24 +44,24 @@ def run_c_reference(A_c, p_c, q_c, r_c, s_c, M, N):
     func.argtypes = []
     func.restype = None
     func()
-    CType_q = ctypes.c_float * (85)
+    CType_q = ctypes.c_float * (680)
     c_arr_q = CType_q.in_dll(lib, 'q')
-    q_c[:] = np.frombuffer(c_arr_q, dtype=np.float32).reshape(85).copy()
-    CType_s = ctypes.c_float * (75)
+    q_c[:] = np.frombuffer(c_arr_q, dtype=np.float32).reshape(680).copy()
+    CType_s = ctypes.c_float * (600)
     c_arr_s = CType_s.in_dll(lib, 's')
-    s_c[:] = np.frombuffer(c_arr_s, dtype=np.float32).reshape(75).copy()
+    s_c[:] = np.frombuffer(c_arr_s, dtype=np.float32).reshape(600).copy()
 
 def benchmark():
     num_warmup = 5
     num_iterations = 50
 
-    A = torch.randn(85, 75, device='cuda', dtype=torch.float32)
-    p = torch.randn(75, device='cuda', dtype=torch.float32)
-    q = torch.randn(85, device='cuda', dtype=torch.float32)
-    r = torch.randn(85, device='cuda', dtype=torch.float32)
-    s = torch.randn(75, device='cuda', dtype=torch.float32)
-    M = 75
-    N = 85
+    A = torch.randn(680, 600, device='cuda', dtype=torch.float32)
+    p = torch.randn(600, device='cuda', dtype=torch.float32)
+    q = torch.randn(680, device='cuda', dtype=torch.float32)
+    r = torch.randn(680, device='cuda', dtype=torch.float32)
+    s = torch.randn(600, device='cuda', dtype=torch.float32)
+    M = 600
+    N = 680
 
     # C reference benchmark
     c_time = None

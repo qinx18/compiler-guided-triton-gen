@@ -1,0 +1,236 @@
+
+## PREVIOUS ATTEMPT FAILED
+
+**Error type**: unknown
+**Error message**:
+```
+  Test 1: ERROR - at 15:18:
+
+    block_start = pid * BLOCK_SIZE
+    offsets = tl.arange(0, BLOCK_SIZE)
+    row_offsets = block_start + offsets
+    row_mask = row_offsets < N
+
+    # Initialize tmp and y to 0
+    tmp_vals = tl.zeros((BLOCK_SIZE,), dtype=tl.float32)
+    y_vals = tl.zeros((BLOCK_SIZE,), dtype=tl.float32)
+
+    # Inner loop over j
+    col_offsets = tl.arange(0, N)
+                  ^
+  Test 2: ERROR - at 15:18:
+
+    block_start = pid * BLOCK_SIZE
+    offsets = tl.arange(0, BLOCK_SIZE)
+    row_offsets = block_start + offsets
+    row_mask = row_offsets < N
+
+    # Initialize tmp and y to 0
+    tmp_vals = tl.zeros((BLOCK_SIZE,), dtype=tl.float32)
+    y_vals = tl.zeros((BLOCK_SIZE,), dtype=tl.float32)
+
+    # Inner loop over j
+    col_offsets = tl.arange(0, N)
+                  ^
+  Test 3: ERROR - at 15:18:
+
+    block_start = pid * BLOCK_SIZE
+    offsets = tl.arange(0, BLOCK_SIZE)
+    row_offsets = block_start + offsets
+    row_mask = row_offsets < N
+
+    # Initialize tmp and y to 0
+    tmp_vals = tl.zeros((BLOCK_SIZE,), dtype=tl.float32)
+    y_vals = tl.zeros((BLOCK_SIZE,), dtype=tl.float32)
+
+    # Inner loop over j
+    col_offsets = tl.arange(0, N)
+                  ^
+Some tests FAILED!
+
+```
+
+Please fix the error.
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def gesummv_kernel(A_ptr, B_ptr, tmp_ptr, x_ptr, y_ptr, alpha, beta, 
+                   N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    
+    block_start = pid * BLOCK_SIZE
+    offsets = tl.arange(0, BLOCK_SIZE)
+    row_offsets = block_start + offsets
+    row_mask = row_offsets < N
+    
+    # Initialize tmp and y to 0
+    tmp_vals = tl.zeros((BLOCK_SIZE,), dtype=tl.float32)
+    y_vals = tl.zeros((BLOCK_SIZE,), dtype=tl.float32)
+    
+    # Inner loop over j
+    col_offsets = tl.arange(0, N)
+    for j in range(N):
+        # Load x[j] (scalar broadcast)
+        x_j = tl.load(x_ptr + j)
+        
+        # Load A[i][j] for all rows in block
+        A_offsets = row_offsets[:, None] * N + j
+        A_vals = tl.load(A_ptr + A_offsets, mask=row_mask[:, None], other=0.0)
+        A_vals = tl.reshape(A_vals, (BLOCK_SIZE,))
+        
+        # Load B[i][j] for all rows in block  
+        B_offsets = row_offsets[:, None] * N + j
+        B_vals = tl.load(B_ptr + B_offsets, mask=row_mask[:, None], other=0.0)
+        B_vals = tl.reshape(B_vals, (BLOCK_SIZE,))
+        
+        # Accumulate
+        tmp_vals = tmp_vals + A_vals * x_j
+        y_vals = y_vals + B_vals * x_j
+    
+    # Final computation: y[i] = alpha * tmp[i] + beta * y[i]
+    final_y = alpha * tmp_vals + beta * y_vals
+    
+    # Store results
+    tl.store(tmp_ptr + row_offsets, tmp_vals, mask=row_mask)
+    tl.store(y_ptr + row_offsets, final_y, mask=row_mask)
+
+def gesummv_triton(A, B, tmp, x, y, alpha, beta, N):
+    BLOCK_SIZE = 32
+    grid = (triton.cdiv(N, BLOCK_SIZE),)
+    
+    gesummv_kernel[grid](
+        A, B, tmp, x, y, alpha, beta, N, BLOCK_SIZE
+    )
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define N 90
+
+float tmp[N];
+float x[N];
+float y[N];
+float A[N][N];
+float B[N][N];
+
+float alpha = 1.5f;
+float beta = 1.2f;
+
+void gesummv_kernel() {
+  int i, j;
+#pragma scop
+  for (i = 0; i < N; i++)
+    {
+      tmp[i] = 0.0;
+      y[i] = 0.0;
+      for (j = 0; j < N; j++)
+	{
+	  tmp[i] = A[i][j] * x[j] + tmp[i];
+	  y[i] = B[i][j] * x[j] + y[i];
+	}
+      y[i] = alpha * tmp[i] + beta * y[i];
+    }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (i = 0; i < N; i++)
+    {
+      tmp[i] = 0.0;
+      y[i] = 0.0;
+      for (j = 0; j < N; j++)
+	{
+	  tmp[i] = A[i][j] * x[j] + tmp[i];
+	  y[i] = B[i][j] * x[j] + y[i];
+	}
+      y[i] = alpha * tmp[i] + beta * y[i];
+    }
+```
+
+
+## Array Information:
+- `A`: read-only
+- `B`: read-only
+- `tmp`: read-write
+- `x`: read-only
+- `y`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `N` = 720
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `gesummv_kernel`
+2. Includes a Python wrapper function named `gesummv_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def gesummv_triton(A, B, tmp, x, y, alpha, beta, N):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 2 of 10. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

@@ -1,0 +1,236 @@
+
+## PREVIOUS ATTEMPT FAILED
+
+**Error type**: unknown
+**Error message**:
+```
+  Test 1: ERROR - at 16:16:
+    # Calculate r and q from pid
+    r = pid // NQ
+    q = pid % NQ
+
+    # Early exit if out of bounds
+    if r >= NR:
+        return
+    if q >= NQ:
+        return
+
+    # Precompute offsets for vectorized operations
+    p_offsets = tl.arange(0, NP)
+                ^
+  Test 2: ERROR - at 16:16:
+    # Calculate r and q from pid
+    r = pid // NQ
+    q = pid % NQ
+
+    # Early exit if out of bounds
+    if r >= NR:
+        return
+    if q >= NQ:
+        return
+
+    # Precompute offsets for vectorized operations
+    p_offsets = tl.arange(0, NP)
+                ^
+  Test 3: ERROR - at 16:16:
+    # Calculate r and q from pid
+    r = pid // NQ
+    q = pid % NQ
+
+    # Early exit if out of bounds
+    if r >= NR:
+        return
+    if q >= NQ:
+        return
+
+    # Precompute offsets for vectorized operations
+    p_offsets = tl.arange(0, NP)
+                ^
+Some tests FAILED!
+
+```
+
+Please fix the error.
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def doitgen_kernel(A_ptr, C4_ptr, sum_ptr, NP: tl.constexpr, NQ: tl.constexpr, NR: tl.constexpr):
+    # Get program ID for parallelizing over r and q dimensions
+    pid = tl.program_id(0)
+    
+    # Calculate r and q from pid
+    r = pid // NQ
+    q = pid % NQ
+    
+    # Early exit if out of bounds
+    if r >= NR:
+        return
+    if q >= NQ:
+        return
+    
+    # Precompute offsets for vectorized operations
+    p_offsets = tl.arange(0, NP)
+    s_offsets = tl.arange(0, NP)
+    
+    # Initialize sum array for this (r, q) pair
+    sum_vals = tl.zeros([NP], dtype=tl.float32)
+    
+    # Compute matrix multiplication: sum[p] = sum_s(A[r][q][s] * C4[s][p])
+    for p in range(NP):
+        sum_p = 0.0
+        
+        # Load A[r][q][:] once for this p
+        a_base = r * (NQ * NP) + q * NP
+        a_vals = tl.load(A_ptr + a_base + s_offsets)
+        
+        # Load C4[:][p] once for this p
+        c4_base = p
+        c4_vals = tl.load(C4_ptr + s_offsets * NP + c4_base)
+        
+        # Compute dot product
+        products = a_vals * c4_vals
+        sum_p = tl.sum(products)
+        
+        # Store to sum array
+        tl.store(sum_ptr + p, sum_p)
+        
+        # Store back to A[r][q][p]
+        a_store_offset = r * (NQ * NP) + q * NP + p
+        tl.store(A_ptr + a_store_offset, sum_p)
+
+def doitgen_triton(A, C4, sum, NP, NQ, NR):
+    # Launch kernel with one thread block per (r, q) pair
+    grid = (NR * NQ,)
+    
+    doitgen_kernel[grid](
+        A, C4, sum,
+        NP, NQ, NR
+    )
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define NR 25
+#define NQ 20
+#define NP 30
+
+float sum[NP];
+float C4[NP][NP];
+float A[NR][NQ][NP];
+
+void doitgen_kernel() {
+  int r, q, p, s;
+#pragma scop
+  for (r = 0; r < NR; r++)
+    for (q = 0; q < NQ; q++)  {
+      for (p = 0; p < NP; p++)  {
+	sum[p] = 0.0;
+	for (s = 0; s < NP; s++)
+	  sum[p] += A[r][q][s] * C4[s][p];
+      }
+      for (p = 0; p < NP; p++)
+	A[r][q][p] = sum[p];
+    }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (r = 0; r < NR; r++)
+    for (q = 0; q < NQ; q++)  {
+      for (p = 0; p < NP; p++)  {
+	sum[p] = 0.0;
+	for (s = 0; s < NP; s++)
+	  sum[p] += A[r][q][s] * C4[s][p];
+      }
+      for (p = 0; p < NP; p++)
+	A[r][q][p] = sum[p];
+    }
+```
+
+
+## Array Information:
+- `A`: read-write
+- `C4`: read-only
+- `sum`: temporary scratch (read-write, not checked for correctness)
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `NP` = 240
+- `NQ` = 160
+- `NR` = 200
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `doitgen_kernel`
+2. Includes a Python wrapper function named `doitgen_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def doitgen_triton(A, C4, sum, NP, NQ, NR):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 2 of 10. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

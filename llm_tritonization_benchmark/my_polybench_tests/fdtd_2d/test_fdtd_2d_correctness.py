@@ -10,13 +10,13 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.fdtd_2d.attempt1 import fdtd_2d_triton
+    from polybench_results_scale8x.llm_triton_no_analysis.fdtd_2d.attempt1 import fdtd_2d_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
 # Load C reference
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "libfdtd_2d.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "libfdtd_2d.so"
 if not C_LIB_PATH.exists():
     print(f"C reference library not found: {C_LIB_PATH}")
     sys.exit(1)
@@ -30,15 +30,15 @@ def run_c_reference(_fict__c, ex_c, ey_c, hz_c, NX, NY, TMAX):
     c_arr__fict_ = CType__fict_.in_dll(lib, '_fict_')
     src__fict_ = np.ascontiguousarray(_fict__c, dtype=np.float32)
     ctypes.memmove(c_arr__fict_, src__fict_.ctypes.data, src__fict_.nbytes)
-    CType_ex = ctypes.c_float * (60 * 80)
+    CType_ex = ctypes.c_float * (480 * 640)
     c_arr_ex = CType_ex.in_dll(lib, 'ex')
     src_ex = np.ascontiguousarray(ex_c, dtype=np.float32)
     ctypes.memmove(c_arr_ex, src_ex.ctypes.data, src_ex.nbytes)
-    CType_ey = ctypes.c_float * (60 * 80)
+    CType_ey = ctypes.c_float * (480 * 640)
     c_arr_ey = CType_ey.in_dll(lib, 'ey')
     src_ey = np.ascontiguousarray(ey_c, dtype=np.float32)
     ctypes.memmove(c_arr_ey, src_ey.ctypes.data, src_ey.nbytes)
-    CType_hz = ctypes.c_float * (60 * 80)
+    CType_hz = ctypes.c_float * (480 * 640)
     c_arr_hz = CType_hz.in_dll(lib, 'hz')
     src_hz = np.ascontiguousarray(hz_c, dtype=np.float32)
     ctypes.memmove(c_arr_hz, src_hz.ctypes.data, src_hz.nbytes)
@@ -53,15 +53,15 @@ def run_c_reference(_fict__c, ex_c, ey_c, hz_c, NX, NY, TMAX):
     func()
 
     # Read back output arrays
-    CType_ex = ctypes.c_float * (60 * 80)
+    CType_ex = ctypes.c_float * (480 * 640)
     c_arr_ex = CType_ex.in_dll(lib, 'ex')
-    ex_c[:] = np.frombuffer(c_arr_ex, dtype=np.float32).reshape(60, 80).copy()
-    CType_ey = ctypes.c_float * (60 * 80)
+    ex_c[:] = np.frombuffer(c_arr_ex, dtype=np.float32).reshape(480, 640).copy()
+    CType_ey = ctypes.c_float * (480 * 640)
     c_arr_ey = CType_ey.in_dll(lib, 'ey')
-    ey_c[:] = np.frombuffer(c_arr_ey, dtype=np.float32).reshape(60, 80).copy()
-    CType_hz = ctypes.c_float * (60 * 80)
+    ey_c[:] = np.frombuffer(c_arr_ey, dtype=np.float32).reshape(480, 640).copy()
+    CType_hz = ctypes.c_float * (480 * 640)
     c_arr_hz = CType_hz.in_dll(lib, 'hz')
-    hz_c[:] = np.frombuffer(c_arr_hz, dtype=np.float32).reshape(60, 80).copy()
+    hz_c[:] = np.frombuffer(c_arr_hz, dtype=np.float32).reshape(480, 640).copy()
 
 def test_correctness():
     """Test Triton vs C reference."""
@@ -72,11 +72,11 @@ def test_correctness():
         try:
             # Initialize arrays
             _fict_ = torch.randn(20, device='cuda', dtype=torch.float32)
-            ex = torch.randn(60, 80, device='cuda', dtype=torch.float32)
-            ey = torch.randn(60, 80, device='cuda', dtype=torch.float32)
-            hz = torch.randn(60, 80, device='cuda', dtype=torch.float32)
-            NX = 60
-            NY = 80
+            ex = torch.randn(480, 640, device='cuda', dtype=torch.float32)
+            ey = torch.randn(480, 640, device='cuda', dtype=torch.float32)
+            hz = torch.randn(480, 640, device='cuda', dtype=torch.float32)
+            NX = 480
+            NY = 640
             TMAX = 20
 
             # Clone for C reference

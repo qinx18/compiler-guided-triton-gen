@@ -10,24 +10,24 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton.gramschmidt.attempt1 import gramschmidt_triton
+    from polybench_results_scale8x.llm_triton_no_analysis.gramschmidt.attempt1 import gramschmidt_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "libgramschmidt.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "libgramschmidt.so"
 
 def run_c_reference(A_c, Q_c, R_c, M, N):
     lib = ctypes.CDLL(str(C_LIB_PATH))
-    CType_A = ctypes.c_float * (60 * 80)
+    CType_A = ctypes.c_float * (480 * 640)
     c_arr_A = CType_A.in_dll(lib, 'A')
     src_A = np.ascontiguousarray(A_c, dtype=np.float32)
     ctypes.memmove(c_arr_A, src_A.ctypes.data, src_A.nbytes)
-    CType_Q = ctypes.c_float * (60 * 80)
+    CType_Q = ctypes.c_float * (480 * 640)
     c_arr_Q = CType_Q.in_dll(lib, 'Q')
     src_Q = np.ascontiguousarray(Q_c, dtype=np.float32)
     ctypes.memmove(c_arr_Q, src_Q.ctypes.data, src_Q.nbytes)
-    CType_R = ctypes.c_float * (80 * 80)
+    CType_R = ctypes.c_float * (640 * 640)
     c_arr_R = CType_R.in_dll(lib, 'R')
     src_R = np.ascontiguousarray(R_c, dtype=np.float32)
     ctypes.memmove(c_arr_R, src_R.ctypes.data, src_R.nbytes)
@@ -36,26 +36,26 @@ def run_c_reference(A_c, Q_c, R_c, M, N):
     func.argtypes = []
     func.restype = None
     func()
-    CType_A = ctypes.c_float * (60 * 80)
+    CType_A = ctypes.c_float * (480 * 640)
     c_arr_A = CType_A.in_dll(lib, 'A')
-    A_c[:] = np.frombuffer(c_arr_A, dtype=np.float32).reshape(60, 80).copy()
-    CType_Q = ctypes.c_float * (60 * 80)
+    A_c[:] = np.frombuffer(c_arr_A, dtype=np.float32).reshape(480, 640).copy()
+    CType_Q = ctypes.c_float * (480 * 640)
     c_arr_Q = CType_Q.in_dll(lib, 'Q')
-    Q_c[:] = np.frombuffer(c_arr_Q, dtype=np.float32).reshape(60, 80).copy()
-    CType_R = ctypes.c_float * (80 * 80)
+    Q_c[:] = np.frombuffer(c_arr_Q, dtype=np.float32).reshape(480, 640).copy()
+    CType_R = ctypes.c_float * (640 * 640)
     c_arr_R = CType_R.in_dll(lib, 'R')
-    R_c[:] = np.frombuffer(c_arr_R, dtype=np.float32).reshape(80, 80).copy()
+    R_c[:] = np.frombuffer(c_arr_R, dtype=np.float32).reshape(640, 640).copy()
 
 def benchmark():
     num_warmup = 5
     num_iterations = 50
 
     # Well-conditioned A with strong diagonal for stable Gram-Schmidt
-    A = torch.randn(60, 80, device='cuda', dtype=torch.float32) + torch.eye(60, 80, device='cuda', dtype=torch.float32) * 5.0
-    R = torch.zeros(80, 80, device='cuda', dtype=torch.float32)
-    Q = torch.zeros(60, 80, device='cuda', dtype=torch.float32)
-    M = 60
-    N = 80
+    A = torch.randn(480, 640, device='cuda', dtype=torch.float32) + torch.eye(480, 640, device='cuda', dtype=torch.float32) * 5.0
+    R = torch.zeros(640, 640, device='cuda', dtype=torch.float32)
+    Q = torch.zeros(480, 640, device='cuda', dtype=torch.float32)
+    M = 480
+    N = 640
 
     # C reference benchmark
     c_time = None

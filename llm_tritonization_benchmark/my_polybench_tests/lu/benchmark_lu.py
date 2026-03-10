@@ -10,16 +10,16 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton.lu.attempt1 import lu_triton
+    from polybench_results_scale8x.llm_triton_no_analysis.lu.attempt2 import lu_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "liblu.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "liblu.so"
 
 def run_c_reference(A_c, N):
     lib = ctypes.CDLL(str(C_LIB_PATH))
-    CType_A = ctypes.c_float * (120 * 120)
+    CType_A = ctypes.c_float * (960 * 960)
     c_arr_A = CType_A.in_dll(lib, 'A')
     src_A = np.ascontiguousarray(A_c, dtype=np.float32)
     ctypes.memmove(c_arr_A, src_A.ctypes.data, src_A.nbytes)
@@ -28,17 +28,17 @@ def run_c_reference(A_c, N):
     func.argtypes = []
     func.restype = None
     func()
-    CType_A = ctypes.c_float * (120 * 120)
+    CType_A = ctypes.c_float * (960 * 960)
     c_arr_A = CType_A.in_dll(lib, 'A')
-    A_c[:] = np.frombuffer(c_arr_A, dtype=np.float32).reshape(120, 120).copy()
+    A_c[:] = np.frombuffer(c_arr_A, dtype=np.float32).reshape(960, 960).copy()
 
 def benchmark():
     num_warmup = 5
     num_iterations = 50
 
     # Diagonally dominant for stable pivotless LU
-    A = torch.randn(120, 120, device='cuda', dtype=torch.float32) + 120 * torch.eye(120, device='cuda', dtype=torch.float32)
-    N = 120
+    A = torch.randn(960, 960, device='cuda', dtype=torch.float32) + 960 * torch.eye(960, device='cuda', dtype=torch.float32)
+    N = 960
 
     # C reference benchmark
     c_time = None

@@ -10,24 +10,24 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton.covariance.attempt1 import covariance_triton
+    from polybench_results_scale8x.llm_triton_no_analysis.covariance.attempt1 import covariance_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "libcovariance.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "libcovariance.so"
 
 def run_c_reference(cov_c, data_c, mean_c, float_n, M, N):
     lib = ctypes.CDLL(str(C_LIB_PATH))
-    CType_cov = ctypes.c_float * (80 * 80)
+    CType_cov = ctypes.c_float * (640 * 640)
     c_arr_cov = CType_cov.in_dll(lib, 'cov')
     src_cov = np.ascontiguousarray(cov_c, dtype=np.float32)
     ctypes.memmove(c_arr_cov, src_cov.ctypes.data, src_cov.nbytes)
-    CType_data = ctypes.c_float * (100 * 80)
+    CType_data = ctypes.c_float * (800 * 640)
     c_arr_data = CType_data.in_dll(lib, 'data')
     src_data = np.ascontiguousarray(data_c, dtype=np.float32)
     ctypes.memmove(c_arr_data, src_data.ctypes.data, src_data.nbytes)
-    CType_mean = ctypes.c_float * (80)
+    CType_mean = ctypes.c_float * (640)
     c_arr_mean = CType_mean.in_dll(lib, 'mean')
     src_mean = np.ascontiguousarray(mean_c, dtype=np.float32)
     ctypes.memmove(c_arr_mean, src_mean.ctypes.data, src_mean.nbytes)
@@ -36,26 +36,26 @@ def run_c_reference(cov_c, data_c, mean_c, float_n, M, N):
     func.argtypes = []
     func.restype = None
     func()
-    CType_cov = ctypes.c_float * (80 * 80)
+    CType_cov = ctypes.c_float * (640 * 640)
     c_arr_cov = CType_cov.in_dll(lib, 'cov')
-    cov_c[:] = np.frombuffer(c_arr_cov, dtype=np.float32).reshape(80, 80).copy()
-    CType_data = ctypes.c_float * (100 * 80)
+    cov_c[:] = np.frombuffer(c_arr_cov, dtype=np.float32).reshape(640, 640).copy()
+    CType_data = ctypes.c_float * (800 * 640)
     c_arr_data = CType_data.in_dll(lib, 'data')
-    data_c[:] = np.frombuffer(c_arr_data, dtype=np.float32).reshape(100, 80).copy()
-    CType_mean = ctypes.c_float * (80)
+    data_c[:] = np.frombuffer(c_arr_data, dtype=np.float32).reshape(800, 640).copy()
+    CType_mean = ctypes.c_float * (640)
     c_arr_mean = CType_mean.in_dll(lib, 'mean')
-    mean_c[:] = np.frombuffer(c_arr_mean, dtype=np.float32).reshape(80).copy()
+    mean_c[:] = np.frombuffer(c_arr_mean, dtype=np.float32).reshape(640).copy()
 
 def benchmark():
     num_warmup = 5
     num_iterations = 50
 
-    cov = torch.randn(80, 80, device='cuda', dtype=torch.float32)
-    data = torch.randn(100, 80, device='cuda', dtype=torch.float32)
-    mean = torch.randn(80, device='cuda', dtype=torch.float32)
-    float_n = float(100)
-    M = 80
-    N = 100
+    cov = torch.randn(640, 640, device='cuda', dtype=torch.float32)
+    data = torch.randn(800, 640, device='cuda', dtype=torch.float32)
+    mean = torch.randn(640, device='cuda', dtype=torch.float32)
+    float_n = float(800)
+    M = 640
+    N = 800
 
     # C reference benchmark
     c_time = None

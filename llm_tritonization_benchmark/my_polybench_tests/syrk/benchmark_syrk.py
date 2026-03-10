@@ -10,20 +10,20 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton.syrk.attempt1 import syrk_triton
+    from polybench_results_scale8x.llm_triton_no_analysis.syrk.attempt1 import syrk_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "libsyrk.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "libsyrk.so"
 
 def run_c_reference(A_c, C_c, alpha, beta, M, N):
     lib = ctypes.CDLL(str(C_LIB_PATH))
-    CType_A = ctypes.c_float * (80 * 60)
+    CType_A = ctypes.c_float * (640 * 480)
     c_arr_A = CType_A.in_dll(lib, 'A')
     src_A = np.ascontiguousarray(A_c, dtype=np.float32)
     ctypes.memmove(c_arr_A, src_A.ctypes.data, src_A.nbytes)
-    CType_C = ctypes.c_float * (80 * 80)
+    CType_C = ctypes.c_float * (640 * 640)
     c_arr_C = CType_C.in_dll(lib, 'C')
     src_C = np.ascontiguousarray(C_c, dtype=np.float32)
     ctypes.memmove(c_arr_C, src_C.ctypes.data, src_C.nbytes)
@@ -33,20 +33,20 @@ def run_c_reference(A_c, C_c, alpha, beta, M, N):
     func.argtypes = []
     func.restype = None
     func()
-    CType_C = ctypes.c_float * (80 * 80)
+    CType_C = ctypes.c_float * (640 * 640)
     c_arr_C = CType_C.in_dll(lib, 'C')
-    C_c[:] = np.frombuffer(c_arr_C, dtype=np.float32).reshape(80, 80).copy()
+    C_c[:] = np.frombuffer(c_arr_C, dtype=np.float32).reshape(640, 640).copy()
 
 def benchmark():
     num_warmup = 5
     num_iterations = 50
 
-    A = torch.randn(80, 60, device='cuda', dtype=torch.float32)
-    C = torch.randn(80, 80, device='cuda', dtype=torch.float32)
+    A = torch.randn(640, 480, device='cuda', dtype=torch.float32)
+    C = torch.randn(640, 640, device='cuda', dtype=torch.float32)
     alpha = 1.5
     beta = 1.5
-    M = 60
-    N = 80
+    M = 480
+    N = 640
 
     # C reference benchmark
     c_time = None

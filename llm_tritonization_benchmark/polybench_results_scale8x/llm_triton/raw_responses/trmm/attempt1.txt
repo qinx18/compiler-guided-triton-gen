@@ -1,0 +1,192 @@
+# LLM-Generated Triton Implementation for trmm (Polybench)
+# Generated: 2026-03-09 14:11:38
+# Model: claude-sonnet-4-20250514
+
+================================================================================
+PROMPT:
+================================================================================
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define M 60
+#define N 80
+
+float A[M][M];
+float B[M][N];
+
+float alpha = 1.5f;
+
+void trmm_kernel() {
+  int i, j, k;
+#pragma scop
+  for (i = 0; i < M; i++)
+     for (j = 0; j < N; j++) {
+        for (k = i+1; k < M; k++)
+           B[i][j] += A[k][i] * B[k][j];
+        B[i][j] = alpha * B[i][j];
+     }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (i = 0; i < M; i++)
+     for (j = 0; j < N; j++) {
+        for (k = i+1; k < M; k++)
+           B[i][j] += A[k][i] * B[k][j];
+        B[i][j] = alpha * B[i][j];
+     }
+```
+
+## WAR (Write-After-Read) Dependencies
+
+**Note**: This kernel has WAR (Write-After-Read) dependencies.
+If you split the computation into **separate Triton kernels** launched sequentially, kernel launch barriers handle these dependencies naturally — no cloning needed.
+Cloning is only needed if reads and writes to the same array happen **within a single kernel**.
+
+**Minimize kernel launches**: Fuse compatible phases into a single kernel when they operate on independent data within each thread. For example, a forward sweep and backward sweep on the same row can share a kernel.
+
+**Loop variables** (outer to inner): i, j, k
+
+**Array `B`**: WAR carried by loop(s) `i, k`
+- Parallelizing `i`: REQUIRES `B_copy = B.clone()`
+- Parallelizing `j`: SAFE (no copy needed for `B`)
+- Parallelizing `k`: REQUIRES `B_copy = B.clone()`
+
+
+## Parallelization Analysis
+
+**Loop dimensions**: ['i', 'j']
+
+- Parallelize `j`, sequential `i`: VALID
+
+- Parallelize `i`, sequential `j`: INVALID
+  - Cross-phase dependency: different loop bodies under `i` read/write the same arrays (e.g., phase 1 writes B, phase 2 reads B)
+
+
+## WAR + Parallelization Recommendation
+
+- **RECOMMENDED**: Parallelize `j` — no WAR copies needed for any array
+
+
+## Array Information:
+- `A`: read-only
+- `B`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `M` = 480
+- `N` = 640
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `trmm_kernel`
+2. Includes a Python wrapper function named `trmm_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def trmm_triton(A, B, alpha, M, N):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+================================================================================
+RESPONSE:
+================================================================================
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def trmm_kernel(A_ptr, B_ptr, alpha, M: tl.constexpr, N: tl.constexpr, BLOCK_J: tl.constexpr):
+    pid_j = tl.program_id(0)
+    
+    j_offset = pid_j * BLOCK_J
+    j_offsets = j_offset + tl.arange(0, BLOCK_J)
+    j_mask = j_offsets < N
+    
+    for i in range(M):
+        # Load B[i, j] values
+        b_ptrs = B_ptr + i * N + j_offsets
+        b_vals = tl.load(b_ptrs, mask=j_mask, other=0.0)
+        
+        # Accumulate: B[i][j] += A[k][i] * B[k][j] for k in [i+1, M)
+        for k in range(i + 1, M):
+            # Load A[k][i] (scalar)
+            a_val = tl.load(A_ptr + k * M + i)
+            
+            # Load B[k][j] values
+            bk_ptrs = B_ptr + k * N + j_offsets
+            bk_vals = tl.load(bk_ptrs, mask=j_mask, other=0.0)
+            
+            # Accumulate
+            b_vals += a_val * bk_vals
+        
+        # Scale by alpha
+        b_vals = alpha * b_vals
+        
+        # Store back to B[i][j]
+        tl.store(b_ptrs, b_vals, mask=j_mask)
+
+def trmm_triton(A, B, alpha, M, N):
+    BLOCK_J = 64
+    
+    grid = (triton.cdiv(N, BLOCK_J),)
+    
+    trmm_kernel[grid](
+        A, B, alpha, M, N, BLOCK_J
+    )
+```

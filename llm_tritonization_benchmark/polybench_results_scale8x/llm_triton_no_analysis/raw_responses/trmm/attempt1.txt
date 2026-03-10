@@ -1,0 +1,177 @@
+# LLM-Generated Triton Implementation for trmm (Polybench)
+# Generated: 2026-03-09 21:02:06
+# Model: claude-sonnet-4-20250514
+
+================================================================================
+PROMPT:
+================================================================================
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define M 60
+#define N 80
+
+float A[M][M];
+float B[M][N];
+
+float alpha = 1.5f;
+
+void trmm_kernel() {
+  int i, j, k;
+#pragma scop
+  for (i = 0; i < M; i++)
+     for (j = 0; j < N; j++) {
+        for (k = i+1; k < M; k++)
+           B[i][j] += A[k][i] * B[k][j];
+        B[i][j] = alpha * B[i][j];
+     }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (i = 0; i < M; i++)
+     for (j = 0; j < N; j++) {
+        for (k = i+1; k < M; k++)
+           B[i][j] += A[k][i] * B[k][j];
+        B[i][j] = alpha * B[i][j];
+     }
+```
+
+
+## Array Information:
+- `A`: read-only
+- `B`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `M` = 480
+- `N` = 640
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `trmm_kernel`
+2. Includes a Python wrapper function named `trmm_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def trmm_triton(A, B, alpha, M, N):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+================================================================================
+RESPONSE:
+================================================================================
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def trmm_kernel(A_ptr, B_ptr, alpha, M: tl.constexpr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    
+    # Calculate which (i, j) this program handles
+    i = pid // N
+    j = pid % N
+    
+    if i >= M or j >= N:
+        return
+    
+    # Load B[i][j] once
+    b_idx = i * N + j
+    b_val = tl.load(B_ptr + b_idx)
+    
+    # Accumulate over k = i+1 to M-1
+    start_k = i + 1
+    if start_k < M:
+        # Process k values in blocks
+        k_offsets = tl.arange(0, BLOCK_SIZE)
+        
+        for k_block in range(start_k, M, BLOCK_SIZE):
+            k_indices = k_block + k_offsets
+            k_mask = (k_indices < M) & (k_indices >= start_k)
+            
+            # Load A[k][i] values
+            a_indices = k_indices * M + i
+            a_vals = tl.load(A_ptr + a_indices, mask=k_mask, other=0.0)
+            
+            # Load B[k][j] values  
+            b_indices = k_indices * N + j
+            b_k_vals = tl.load(B_ptr + b_indices, mask=k_mask, other=0.0)
+            
+            # Compute products and accumulate
+            products = a_vals * b_k_vals
+            b_val += tl.sum(products)
+    
+    # Apply alpha scaling and store result
+    b_val = alpha * b_val
+    tl.store(B_ptr + b_idx, b_val)
+
+def trmm_triton(A, B, alpha, M, N):
+    # Launch one thread per (i, j) pair
+    grid = (M * N,)
+    
+    # Choose block size for k-dimension processing
+    BLOCK_SIZE = 64
+    
+    trmm_kernel[grid](
+        A, B, alpha, 
+        M, N, BLOCK_SIZE
+    )
+    
+    return B
+```

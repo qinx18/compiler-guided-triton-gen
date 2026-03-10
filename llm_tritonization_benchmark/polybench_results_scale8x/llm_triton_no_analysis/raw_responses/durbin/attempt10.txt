@@ -1,0 +1,208 @@
+
+## PREVIOUS ATTEMPT FAILED - NUMERICAL ERROR
+
+Your last attempt produced incorrect numerical results.
+
+**Error type**: Numerical error (values don't match)
+**Max error observed**: 1.869999e+01
+
+Please fix the numerical computation. Common causes:
+- Incorrect loop bounds or indices
+- Wrong array access patterns (row-major vs column-major)
+- Missing or incorrect operations
+- Off-by-one errors
+- Cloning input arrays instead of modifying them in-place (the test checks the original tensors)
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def durbin_kernel(r_ptr, y_ptr, z_ptr, N: tl.constexpr):
+    # Initialize y[0], beta, alpha
+    r0 = tl.load(r_ptr)
+    tl.store(y_ptr, -r0)
+    
+    beta = 1.0
+    alpha = -r0
+    
+    # Main loop over k
+    for k in range(1, N):
+        # Update beta
+        beta = (1.0 - alpha * alpha) * beta
+        
+        # Compute sum
+        sum_val = 0.0
+        for i in range(k):
+            r_val = tl.load(r_ptr + (k - i - 1))
+            y_val = tl.load(y_ptr + i)
+            sum_val += r_val * y_val
+        
+        # Update alpha
+        r_k = tl.load(r_ptr + k)
+        alpha = -(r_k + sum_val) / beta
+        
+        # Update z array: z[i] = y[i] + alpha*y[k-i-1]
+        for i in range(k):
+            y_i = tl.load(y_ptr + i)
+            y_k_minus_i_minus_1 = tl.load(y_ptr + (k - i - 1))
+            z_i = y_i + alpha * y_k_minus_i_minus_1
+            tl.store(z_ptr + i, z_i)
+        
+        # Copy z to y: y[i] = z[i]
+        for i in range(k):
+            z_i = tl.load(z_ptr + i)
+            tl.store(y_ptr + i, z_i)
+        
+        # Set y[k] = alpha
+        tl.store(y_ptr + k, alpha)
+
+def durbin_triton(r, y, z, N):
+    grid = (1,)
+    durbin_kernel[grid](r, y, z, N)
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define N 120
+
+float r[N];
+float y[N];
+
+// Local variables from kernel function
+float z[N];
+float alpha;
+float beta;
+float sum;
+
+void durbin_kernel() {
+  int i, k;
+#pragma scop
+ y[0] = -r[0];
+ beta = 1.0;
+ alpha = -r[0];
+
+ for (k = 1; k < N; k++) {
+   beta = (1-alpha*alpha)*beta;
+   sum = 0.0;
+   for (i=0; i<k; i++) {
+      sum += r[k-i-1]*y[i];
+   }
+   alpha = - (r[k] + sum)/beta;
+
+   for (i=0; i<k; i++) {
+      z[i] = y[i] + alpha*y[k-i-1];
+   }
+   for (i=0; i<k; i++) {
+     y[i] = z[i];
+   }
+   y[k] = alpha;
+ }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+y[0] = -r[0];
+ beta = 1.0;
+ alpha = -r[0];
+
+ for (k = 1; k < N; k++) {
+   beta = (1-alpha*alpha)*beta;
+   sum = 0.0;
+   for (i=0; i<k; i++) {
+      sum += r[k-i-1]*y[i];
+   }
+   alpha = - (r[k] + sum)/beta;
+
+   for (i=0; i<k; i++) {
+      z[i] = y[i] + alpha*y[k-i-1];
+   }
+   for (i=0; i<k; i++) {
+     y[i] = z[i];
+   }
+   y[k] = alpha;
+ }
+```
+
+
+## Array Information:
+- `r`: read-only
+- `y`: read-write
+- `z`: temporary scratch (read-write, not checked for correctness)
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `N` = 960
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `durbin_kernel`
+2. Includes a Python wrapper function named `durbin_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def durbin_triton(r, y, z, N):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 10 of 10. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

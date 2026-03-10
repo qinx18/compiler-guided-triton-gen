@@ -1,0 +1,212 @@
+
+## PREVIOUS ATTEMPT HAS LOW PERFORMANCE - NEEDS BETTER PARALLELIZATION
+
+Your last attempt is CORRECT but has very low performance (speedup: 0.071085x).
+This indicates the code is NOT properly parallelized for GPU execution.
+
+**CRITICAL ISSUE**: Your kernel is likely running sequentially instead of in parallel.
+
+**Common parallelization mistakes to fix**:
+1. Using `grid=(1,)` with a single thread doing all work — this is SEQUENTIAL on GPU!
+2. Using scalar `tl.load`/`tl.store` in a Python for loop instead of vectorized block operations
+3. NOT using `tl.program_id(0)` to distribute work across GPU blocks
+4. Processing ALL elements in one block instead of splitting across multiple blocks
+
+**CORRECT parallel pattern** (each block handles different elements):
+```python
+@triton.jit
+def kernel(..., BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)                    # Get unique block ID
+    block_start = pid * BLOCK_SIZE            # Each block starts at different offset
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # Each block handles BLOCK_SIZE elements
+    mask = offsets < n_elements
+    # Load, compute, store for THIS block only - NO for loop over all elements!
+```
+
+**For 2D kernels**, parallelize the outer loop dimension:
+```python
+@triton.jit
+def kernel(..., N, BLOCK_SIZE: tl.constexpr):
+    row = tl.program_id(0)  # Each block handles one row
+    col_offsets = tl.arange(0, BLOCK_SIZE)
+    # Process row 'row' with vectorized column access
+```
+
+## LAST ATTEMPT (NEEDS PARALLELIZATION FIX):
+```python
+import triton
+import triton.language as tl
+
+@triton.jit
+def k2mm_kernel(A_ptr, B_ptr, C_ptr, D_ptr, tmp_ptr, alpha, beta, 
+                NI: tl.constexpr, NJ: tl.constexpr, NK: tl.constexpr, NL: tl.constexpr,
+                BLOCK_SIZE: tl.constexpr):
+    
+    pid = tl.program_id(0)
+    
+    # First loop: tmp[i][j] = sum(alpha * A[i][k] * B[k][j])
+    for i in range(NI):
+        for j in range(NJ):
+            tmp_val = 0.0
+            for k in range(NK):
+                a_val = tl.load(A_ptr + i * NK + k)
+                b_val = tl.load(B_ptr + k * NJ + j)
+                tmp_val += alpha * a_val * b_val
+            tl.store(tmp_ptr + i * NJ + j, tmp_val)
+    
+    # Second loop: D[i][j] = beta * D[i][j] + sum(tmp[i][k] * C[k][j])
+    for i in range(NI):
+        for j in range(NL):
+            d_val = tl.load(D_ptr + i * NL + j)
+            d_val *= beta
+            for k in range(NJ):
+                tmp_val = tl.load(tmp_ptr + i * NJ + k)
+                c_val = tl.load(C_ptr + k * NL + j)
+                d_val += tmp_val * c_val
+            tl.store(D_ptr + i * NL + j, d_val)
+
+def k2mm_triton(A, B, C, D, tmp, alpha, beta, NI, NJ, NK, NL):
+    grid = (1,)
+    k2mm_kernel[grid](A, B, C, D, tmp, alpha, beta, NI, NJ, NK, NL, BLOCK_SIZE=16)
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define NI 40
+#define NJ 50
+#define NK 70
+#define NL 80
+
+float tmp[NI][NJ];
+float A[NI][NK];
+float B[NK][NJ];
+float C[NJ][NL];
+float D[NI][NL];
+
+float alpha = 1.5f;
+float beta = 1.2f;
+
+void k2mm_kernel() {
+  int i, j, k;
+#pragma scop
+  /* D := alpha*A*B*C + beta*D */
+  for (i = 0; i < NI; i++)
+    for (j = 0; j < NJ; j++)
+      {
+	tmp[i][j] = 0.0;
+	for (k = 0; k < NK; ++k)
+	  tmp[i][j] += alpha * A[i][k] * B[k][j];
+      }
+  for (i = 0; i < NI; i++)
+    for (j = 0; j < NL; j++)
+      {
+	D[i][j] *= beta;
+	for (k = 0; k < NJ; ++k)
+	  D[i][j] += tmp[i][k] * C[k][j];
+      }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+/* D := alpha*A*B*C + beta*D */
+  for (i = 0; i < NI; i++)
+    for (j = 0; j < NJ; j++)
+      {
+	tmp[i][j] = 0.0;
+	for (k = 0; k < NK; ++k)
+	  tmp[i][j] += alpha * A[i][k] * B[k][j];
+      }
+  for (i = 0; i < NI; i++)
+    for (j = 0; j < NL; j++)
+      {
+	D[i][j] *= beta;
+	for (k = 0; k < NJ; ++k)
+	  D[i][j] += tmp[i][k] * C[k][j];
+      }
+```
+
+
+## Array Information:
+- `A`: read-only
+- `B`: read-only
+- `C`: read-only
+- `D`: read-write
+- `tmp`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `NI` = 320
+- `NJ` = 400
+- `NK` = 560
+- `NL` = 640
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `k2mm_kernel`
+2. Includes a Python wrapper function named `k2mm_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def k2mm_triton(A, B, C, D, tmp, alpha, beta, NI, NJ, NK, NL):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 7 of 10. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

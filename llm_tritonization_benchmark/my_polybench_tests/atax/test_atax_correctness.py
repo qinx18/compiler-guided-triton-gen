@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for atax (Polybench) - attempt 1"""
+"""Correctness test for atax (Polybench) - attempt 2"""
 import sys
 import ctypes
 import numpy as np
@@ -10,13 +10,13 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.atax.attempt1 import atax_triton
+    from polybench_results_scale8x.llm_triton_no_analysis.atax.attempt2 import atax_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
 # Load C reference
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "libatax.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "libatax.so"
 if not C_LIB_PATH.exists():
     print(f"C reference library not found: {C_LIB_PATH}")
     sys.exit(1)
@@ -26,19 +26,19 @@ def run_c_reference(A_c, tmp_c, x_c, y_c, M, N):
     lib = ctypes.CDLL(str(C_LIB_PATH))
 
     # Set global arrays in the .so
-    CType_A = ctypes.c_float * (65 * 85)
+    CType_A = ctypes.c_float * (520 * 680)
     c_arr_A = CType_A.in_dll(lib, 'A')
     src_A = np.ascontiguousarray(A_c, dtype=np.float32)
     ctypes.memmove(c_arr_A, src_A.ctypes.data, src_A.nbytes)
-    CType_tmp = ctypes.c_float * (65)
+    CType_tmp = ctypes.c_float * (520)
     c_arr_tmp = CType_tmp.in_dll(lib, 'tmp')
     src_tmp = np.ascontiguousarray(tmp_c, dtype=np.float32)
     ctypes.memmove(c_arr_tmp, src_tmp.ctypes.data, src_tmp.nbytes)
-    CType_x = ctypes.c_float * (85)
+    CType_x = ctypes.c_float * (680)
     c_arr_x = CType_x.in_dll(lib, 'x')
     src_x = np.ascontiguousarray(x_c, dtype=np.float32)
     ctypes.memmove(c_arr_x, src_x.ctypes.data, src_x.nbytes)
-    CType_y = ctypes.c_float * (85)
+    CType_y = ctypes.c_float * (680)
     c_arr_y = CType_y.in_dll(lib, 'y')
     src_y = np.ascontiguousarray(y_c, dtype=np.float32)
     ctypes.memmove(c_arr_y, src_y.ctypes.data, src_y.nbytes)
@@ -53,12 +53,12 @@ def run_c_reference(A_c, tmp_c, x_c, y_c, M, N):
     func()
 
     # Read back output arrays
-    CType_tmp = ctypes.c_float * (65)
+    CType_tmp = ctypes.c_float * (520)
     c_arr_tmp = CType_tmp.in_dll(lib, 'tmp')
-    tmp_c[:] = np.frombuffer(c_arr_tmp, dtype=np.float32).reshape(65).copy()
-    CType_y = ctypes.c_float * (85)
+    tmp_c[:] = np.frombuffer(c_arr_tmp, dtype=np.float32).reshape(520).copy()
+    CType_y = ctypes.c_float * (680)
     c_arr_y = CType_y.in_dll(lib, 'y')
-    y_c[:] = np.frombuffer(c_arr_y, dtype=np.float32).reshape(85).copy()
+    y_c[:] = np.frombuffer(c_arr_y, dtype=np.float32).reshape(680).copy()
 
 def test_correctness():
     """Test Triton vs C reference."""
@@ -68,12 +68,12 @@ def test_correctness():
     for test_idx in range(num_tests):
         try:
             # Initialize arrays
-            A = torch.randn(65, 85, device='cuda', dtype=torch.float32)
-            tmp = torch.randn(65, device='cuda', dtype=torch.float32)
-            x = torch.randn(85, device='cuda', dtype=torch.float32)
-            y = torch.randn(85, device='cuda', dtype=torch.float32)
-            M = 65
-            N = 85
+            A = torch.randn(520, 680, device='cuda', dtype=torch.float32)
+            tmp = torch.randn(520, device='cuda', dtype=torch.float32)
+            x = torch.randn(680, device='cuda', dtype=torch.float32)
+            y = torch.randn(680, device='cuda', dtype=torch.float32)
+            M = 520
+            N = 680
 
             # Clone for C reference
             A_c = A.cpu().numpy().copy()

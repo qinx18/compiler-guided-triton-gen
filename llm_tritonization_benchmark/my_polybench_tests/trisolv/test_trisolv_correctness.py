@@ -10,13 +10,13 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.trisolv.attempt1 import trisolv_triton
+    from polybench_results_scale8x.llm_triton_no_analysis.trisolv.attempt1 import trisolv_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
 # Load C reference
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "libtrisolv.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "libtrisolv.so"
 if not C_LIB_PATH.exists():
     print(f"C reference library not found: {C_LIB_PATH}")
     sys.exit(1)
@@ -26,15 +26,15 @@ def run_c_reference(L_c, b_c, x_c, N):
     lib = ctypes.CDLL(str(C_LIB_PATH))
 
     # Set global arrays in the .so
-    CType_L = ctypes.c_float * (120 * 120)
+    CType_L = ctypes.c_float * (960 * 960)
     c_arr_L = CType_L.in_dll(lib, 'L')
     src_L = np.ascontiguousarray(L_c, dtype=np.float32)
     ctypes.memmove(c_arr_L, src_L.ctypes.data, src_L.nbytes)
-    CType_b = ctypes.c_float * (120)
+    CType_b = ctypes.c_float * (960)
     c_arr_b = CType_b.in_dll(lib, 'b')
     src_b = np.ascontiguousarray(b_c, dtype=np.float32)
     ctypes.memmove(c_arr_b, src_b.ctypes.data, src_b.nbytes)
-    CType_x = ctypes.c_float * (120)
+    CType_x = ctypes.c_float * (960)
     c_arr_x = CType_x.in_dll(lib, 'x')
     src_x = np.ascontiguousarray(x_c, dtype=np.float32)
     ctypes.memmove(c_arr_x, src_x.ctypes.data, src_x.nbytes)
@@ -49,9 +49,9 @@ def run_c_reference(L_c, b_c, x_c, N):
     func()
 
     # Read back output arrays
-    CType_x = ctypes.c_float * (120)
+    CType_x = ctypes.c_float * (960)
     c_arr_x = CType_x.in_dll(lib, 'x')
-    x_c[:] = np.frombuffer(c_arr_x, dtype=np.float32).reshape(120).copy()
+    x_c[:] = np.frombuffer(c_arr_x, dtype=np.float32).reshape(960).copy()
 
 def test_correctness():
     """Test Triton vs C reference."""
@@ -62,11 +62,11 @@ def test_correctness():
         try:
             # Initialize arrays
             # Lower triangular with |diagonal| >= 1
-            L = torch.tril(torch.randn(120, 120, device='cuda', dtype=torch.float32))
+            L = torch.tril(torch.randn(960, 960, device='cuda', dtype=torch.float32))
             L.diagonal().abs_().clamp_(min=1.0)
-            b = torch.randn(120, device='cuda', dtype=torch.float32)
-            x = torch.zeros(120, device='cuda', dtype=torch.float32)
-            N = 120
+            b = torch.randn(960, device='cuda', dtype=torch.float32)
+            x = torch.zeros(960, device='cuda', dtype=torch.float32)
+            N = 960
 
             # Clone for C reference
             L_c = L.cpu().numpy().copy()

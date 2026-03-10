@@ -10,24 +10,24 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton.durbin.attempt2 import durbin_triton
+    from polybench_results_scale8x.llm_triton.durbin.attempt9 import durbin_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "libdurbin.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "libdurbin.so"
 
 def run_c_reference(r_c, y_c, z_c, N):
     lib = ctypes.CDLL(str(C_LIB_PATH))
-    CType_r = ctypes.c_float * (120)
+    CType_r = ctypes.c_float * (960)
     c_arr_r = CType_r.in_dll(lib, 'r')
     src_r = np.ascontiguousarray(r_c, dtype=np.float32)
     ctypes.memmove(c_arr_r, src_r.ctypes.data, src_r.nbytes)
-    CType_y = ctypes.c_float * (120)
+    CType_y = ctypes.c_float * (960)
     c_arr_y = CType_y.in_dll(lib, 'y')
     src_y = np.ascontiguousarray(y_c, dtype=np.float32)
     ctypes.memmove(c_arr_y, src_y.ctypes.data, src_y.nbytes)
-    CType_z = ctypes.c_float * (120)
+    CType_z = ctypes.c_float * (960)
     c_arr_z = CType_z.in_dll(lib, 'z')
     src_z = np.ascontiguousarray(z_c, dtype=np.float32)
     ctypes.memmove(c_arr_z, src_z.ctypes.data, src_z.nbytes)
@@ -36,18 +36,18 @@ def run_c_reference(r_c, y_c, z_c, N):
     func.argtypes = []
     func.restype = None
     func()
-    CType_y = ctypes.c_float * (120)
+    CType_y = ctypes.c_float * (960)
     c_arr_y = CType_y.in_dll(lib, 'y')
-    y_c[:] = np.frombuffer(c_arr_y, dtype=np.float32).reshape(120).copy()
+    y_c[:] = np.frombuffer(c_arr_y, dtype=np.float32).reshape(960).copy()
 
 def benchmark():
     num_warmup = 5
     num_iterations = 50
 
-    r = torch.randn(120, device='cuda', dtype=torch.float32)
-    y = torch.randn(120, device='cuda', dtype=torch.float32)
-    z = torch.randn(120, device='cuda', dtype=torch.float32)
-    N = 120
+    r = torch.randn(960, device='cuda', dtype=torch.float32)
+    y = torch.randn(960, device='cuda', dtype=torch.float32)
+    z = torch.randn(960, device='cuda', dtype=torch.float32)
+    N = 960
 
     # C reference benchmark
     c_time = None

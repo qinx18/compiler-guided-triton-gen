@@ -10,20 +10,20 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton.heat_3d.attempt1 import heat_3d_triton
+    from polybench_results_scale8x.llm_triton_no_analysis.heat_3d.attempt6 import heat_3d_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "libheat_3d.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "libheat_3d.so"
 
 def run_c_reference(A_c, B_c, N, TSTEPS):
     lib = ctypes.CDLL(str(C_LIB_PATH))
-    CType_A = ctypes.c_float * (40 * 40 * 40)
+    CType_A = ctypes.c_float * (320 * 320 * 320)
     c_arr_A = CType_A.in_dll(lib, 'A')
     src_A = np.ascontiguousarray(A_c, dtype=np.float32)
     ctypes.memmove(c_arr_A, src_A.ctypes.data, src_A.nbytes)
-    CType_B = ctypes.c_float * (40 * 40 * 40)
+    CType_B = ctypes.c_float * (320 * 320 * 320)
     c_arr_B = CType_B.in_dll(lib, 'B')
     src_B = np.ascontiguousarray(B_c, dtype=np.float32)
     ctypes.memmove(c_arr_B, src_B.ctypes.data, src_B.nbytes)
@@ -32,20 +32,20 @@ def run_c_reference(A_c, B_c, N, TSTEPS):
     func.argtypes = []
     func.restype = None
     func()
-    CType_A = ctypes.c_float * (40 * 40 * 40)
+    CType_A = ctypes.c_float * (320 * 320 * 320)
     c_arr_A = CType_A.in_dll(lib, 'A')
-    A_c[:] = np.frombuffer(c_arr_A, dtype=np.float32).reshape(40, 40, 40).copy()
-    CType_B = ctypes.c_float * (40 * 40 * 40)
+    A_c[:] = np.frombuffer(c_arr_A, dtype=np.float32).reshape(320, 320, 320).copy()
+    CType_B = ctypes.c_float * (320 * 320 * 320)
     c_arr_B = CType_B.in_dll(lib, 'B')
-    B_c[:] = np.frombuffer(c_arr_B, dtype=np.float32).reshape(40, 40, 40).copy()
+    B_c[:] = np.frombuffer(c_arr_B, dtype=np.float32).reshape(320, 320, 320).copy()
 
 def benchmark():
     num_warmup = 5
     num_iterations = 50
 
-    A = torch.randn(40, 40, 40, device='cuda', dtype=torch.float32)
-    B = torch.randn(40, 40, 40, device='cuda', dtype=torch.float32)
-    N = 40
+    A = torch.randn(320, 320, 320, device='cuda', dtype=torch.float32)
+    B = torch.randn(320, 320, 320, device='cuda', dtype=torch.float32)
+    N = 320
     TSTEPS = 20
 
     # C reference benchmark

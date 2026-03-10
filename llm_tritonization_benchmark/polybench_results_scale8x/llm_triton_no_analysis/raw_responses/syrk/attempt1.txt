@@ -1,0 +1,185 @@
+# LLM-Generated Triton Implementation for syrk (Polybench)
+# Generated: 2026-03-09 21:01:36
+# Model: claude-sonnet-4-20250514
+
+================================================================================
+PROMPT:
+================================================================================
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define M 60
+#define N 80
+
+float C[N][N];
+float A[N][M];
+
+float alpha = 1.5f;
+float beta = 1.2f;
+
+void syrk_kernel() {
+  int i, j, k;
+#pragma scop
+  for (i = 0; i < N; i++) {
+    for (j = 0; j <= i; j++)
+      C[i][j] *= beta;
+    for (k = 0; k < M; k++) {
+      for (j = 0; j <= i; j++)
+        C[i][j] += alpha * A[i][k] * A[j][k];
+    }
+  }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (i = 0; i < N; i++) {
+    for (j = 0; j <= i; j++)
+      C[i][j] *= beta;
+    for (k = 0; k < M; k++) {
+      for (j = 0; j <= i; j++)
+        C[i][j] += alpha * A[i][k] * A[j][k];
+    }
+  }
+```
+
+
+## Array Information:
+- `A`: read-only
+- `C`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `M` = 480
+- `N` = 640
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `syrk_kernel`
+2. Includes a Python wrapper function named `syrk_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def syrk_triton(A, C, alpha, beta, M, N):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+================================================================================
+RESPONSE:
+================================================================================
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def syrk_kernel(A_ptr, C_ptr, alpha, beta, M: tl.constexpr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    # Get program ID
+    pid = tl.program_id(0)
+    
+    # Calculate which row this program handles
+    i = pid
+    
+    if i >= N:
+        return
+    
+    # First loop: multiply C[i][j] by beta for j <= i
+    j_offsets = tl.arange(0, BLOCK_SIZE)
+    for j_block in range(0, i + 1, BLOCK_SIZE):
+        j_indices = j_block + j_offsets
+        j_mask = (j_indices <= i) & (j_indices < N)
+        
+        c_offsets = i * N + j_indices
+        c_vals = tl.load(C_ptr + c_offsets, mask=j_mask, other=0.0)
+        c_vals = c_vals * beta
+        tl.store(C_ptr + c_offsets, c_vals, mask=j_mask)
+    
+    # Second loop: accumulate alpha * A[i][k] * A[j][k]
+    for k in range(M):
+        # Load A[i][k]
+        a_ik_offset = i * M + k
+        a_ik = tl.load(A_ptr + a_ik_offset)
+        
+        # Process j in blocks
+        for j_block in range(0, i + 1, BLOCK_SIZE):
+            j_indices = j_block + j_offsets
+            j_mask = (j_indices <= i) & (j_indices < N)
+            
+            # Load A[j][k] for all valid j
+            a_jk_offsets = j_indices * M + k
+            a_jk_vals = tl.load(A_ptr + a_jk_offsets, mask=j_mask, other=0.0)
+            
+            # Load current C[i][j] values
+            c_offsets = i * N + j_indices
+            c_vals = tl.load(C_ptr + c_offsets, mask=j_mask, other=0.0)
+            
+            # Update C[i][j] += alpha * A[i][k] * A[j][k]
+            c_vals = c_vals + alpha * a_ik * a_jk_vals
+            
+            # Store back
+            tl.store(C_ptr + c_offsets, c_vals, mask=j_mask)
+
+def syrk_triton(A, C, alpha, beta, M, N):
+    # Determine block size
+    BLOCK_SIZE = 64
+    
+    # Launch kernel with one program per row
+    grid = (N,)
+    
+    syrk_kernel[grid](
+        A, C, alpha, beta, M, N, BLOCK_SIZE
+    )
+```

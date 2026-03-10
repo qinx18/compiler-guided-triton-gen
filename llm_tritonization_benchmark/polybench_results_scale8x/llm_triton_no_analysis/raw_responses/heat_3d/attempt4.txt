@@ -1,0 +1,295 @@
+
+## PREVIOUS ATTEMPT FAILED
+
+**Error type**: unknown
+**Error message**:
+```
+  Test 1: ERROR - at 18:16:
+
+    block_start = pid * BLOCK_SIZE
+    offsets = tl.arange(0, BLOCK_SIZE)
+    indices = block_start + offsets
+    mask = indices < total_elements
+
+    # Time loop
+    for t in range(TSTEPS):
+        # First phase: A -> B
+        for idx in range(BLOCK_SIZE):
+            if block_start + idx >= total_elements:
+                break
+                ^
+unsupported AST node type: Break
+  Test 2: ERROR - at 18:16:
+
+    block_start = pid * BLOCK_SIZE
+    offsets = tl.arange(0, BLOCK_SIZE)
+    indices = block_start + offsets
+    mask = indices < total_elements
+
+    # Time loop
+    for t in range(TSTEPS):
+        # First phase: A -> B
+        for idx in range(BLOCK_SIZE):
+            if block_start + idx >= total_elements:
+                break
+                ^
+unsupported AST node type: Break
+  Test 3: ERROR - at 18:16:
+
+    block_start = pid * BLOCK_SIZE
+    offsets = tl.arange(0, BLOCK_SIZE)
+    indices = block_start + offsets
+    mask = indices < total_elements
+
+    # Time loop
+    for t in range(TSTEPS):
+        # First phase: A -> B
+        for idx in range(BLOCK_SIZE):
+            if block_start + idx >= total_elements:
+                break
+                ^
+unsupported AST node type: Break
+Some tests FAILED!
+
+```
+
+Please fix the error.
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def heat_3d_kernel(A_ptr, B_ptr, N: tl.constexpr, TSTEPS: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    
+    # Calculate which (i,j,k) this program handles
+    interior_size = N - 2
+    total_elements = interior_size * interior_size * interior_size
+    
+    block_start = pid * BLOCK_SIZE
+    offsets = tl.arange(0, BLOCK_SIZE)
+    indices = block_start + offsets
+    mask = indices < total_elements
+    
+    # Time loop
+    for t in range(TSTEPS):
+        # First phase: A -> B
+        for idx in range(BLOCK_SIZE):
+            if block_start + idx >= total_elements:
+                break
+                
+            linear_idx = block_start + idx
+            
+            # Convert linear index to 3D coordinates (1-based indexing)
+            k_idx = linear_idx % interior_size + 1
+            temp = linear_idx // interior_size
+            j_idx = temp % interior_size + 1
+            i_idx = temp // interior_size + 1
+            
+            center_idx = i_idx * (N * N) + j_idx * N + k_idx
+            
+            # Load A values
+            a_center = tl.load(A_ptr + center_idx)
+            a_ip1 = tl.load(A_ptr + center_idx + N * N)
+            a_im1 = tl.load(A_ptr + center_idx - N * N)
+            a_jp1 = tl.load(A_ptr + center_idx + N)
+            a_jm1 = tl.load(A_ptr + center_idx - N)
+            a_kp1 = tl.load(A_ptr + center_idx + 1)
+            a_km1 = tl.load(A_ptr + center_idx - 1)
+            
+            # Compute B[i][j][k]
+            b_val = (0.125 * (a_ip1 - 2.0 * a_center + a_im1) +
+                     0.125 * (a_jp1 - 2.0 * a_center + a_jm1) +
+                     0.125 * (a_kp1 - 2.0 * a_center + a_km1) +
+                     a_center)
+            
+            tl.store(B_ptr + center_idx, b_val)
+        
+        # Second phase: B -> A
+        for idx in range(BLOCK_SIZE):
+            if block_start + idx >= total_elements:
+                break
+                
+            linear_idx = block_start + idx
+            
+            # Convert linear index to 3D coordinates (1-based indexing)
+            k_idx = linear_idx % interior_size + 1
+            temp = linear_idx // interior_size
+            j_idx = temp % interior_size + 1
+            i_idx = temp // interior_size + 1
+            
+            center_idx = i_idx * (N * N) + j_idx * N + k_idx
+            
+            # Load B values
+            b_center = tl.load(B_ptr + center_idx)
+            b_ip1 = tl.load(B_ptr + center_idx + N * N)
+            b_im1 = tl.load(B_ptr + center_idx - N * N)
+            b_jp1 = tl.load(B_ptr + center_idx + N)
+            b_jm1 = tl.load(B_ptr + center_idx - N)
+            b_kp1 = tl.load(B_ptr + center_idx + 1)
+            b_km1 = tl.load(B_ptr + center_idx - 1)
+            
+            # Compute A[i][j][k]
+            a_val = (0.125 * (b_ip1 - 2.0 * b_center + b_im1) +
+                     0.125 * (b_jp1 - 2.0 * b_center + b_jm1) +
+                     0.125 * (b_kp1 - 2.0 * b_center + b_km1) +
+                     b_center)
+            
+            tl.store(A_ptr + center_idx, a_val)
+
+def heat_3d_triton(A, B, N, TSTEPS):
+    interior_size = N - 2
+    total_elements = interior_size * interior_size * interior_size
+    
+    BLOCK_SIZE = 128
+    grid = (triton.cdiv(total_elements, BLOCK_SIZE),)
+    
+    heat_3d_kernel[grid](
+        A, B, N, TSTEPS, BLOCK_SIZE
+    )
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define TSTEPS 20
+#define N 40
+
+float A[N][N][N];
+float B[N][N][N];
+
+void heat_3d_kernel() {
+  int t, i, j, k;
+#pragma scop
+    for (t = 1; t <= TSTEPS; t++) {
+        for (i = 1; i < N-1; i++) {
+            for (j = 1; j < N-1; j++) {
+                for (k = 1; k < N-1; k++) {
+                    B[i][j][k] =   0.125 * (A[i+1][j][k] - 2.0 * A[i][j][k] + A[i-1][j][k])
+                                 + 0.125 * (A[i][j+1][k] - 2.0 * A[i][j][k] + A[i][j-1][k])
+                                 + 0.125 * (A[i][j][k+1] - 2.0 * A[i][j][k] + A[i][j][k-1])
+                                 + A[i][j][k];
+                }
+            }
+        }
+        for (i = 1; i < N-1; i++) {
+           for (j = 1; j < N-1; j++) {
+               for (k = 1; k < N-1; k++) {
+                   A[i][j][k] =   0.125 * (B[i+1][j][k] - 2.0 * B[i][j][k] + B[i-1][j][k])
+                                + 0.125 * (B[i][j+1][k] - 2.0 * B[i][j][k] + B[i][j-1][k])
+                                + 0.125 * (B[i][j][k+1] - 2.0 * B[i][j][k] + B[i][j][k-1])
+                                + B[i][j][k];
+               }
+           }
+       }
+    }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (t = 1; t <= TSTEPS; t++) {
+        for (i = 1; i < N-1; i++) {
+            for (j = 1; j < N-1; j++) {
+                for (k = 1; k < N-1; k++) {
+                    B[i][j][k] =   0.125 * (A[i+1][j][k] - 2.0 * A[i][j][k] + A[i-1][j][k])
+                                 + 0.125 * (A[i][j+1][k] - 2.0 * A[i][j][k] + A[i][j-1][k])
+                                 + 0.125 * (A[i][j][k+1] - 2.0 * A[i][j][k] + A[i][j][k-1])
+                                 + A[i][j][k];
+                }
+            }
+        }
+        for (i = 1; i < N-1; i++) {
+           for (j = 1; j < N-1; j++) {
+               for (k = 1; k < N-1; k++) {
+                   A[i][j][k] =   0.125 * (B[i+1][j][k] - 2.0 * B[i][j][k] + B[i-1][j][k])
+                                + 0.125 * (B[i][j+1][k] - 2.0 * B[i][j][k] + B[i][j-1][k])
+                                + 0.125 * (B[i][j][k+1] - 2.0 * B[i][j][k] + B[i][j][k-1])
+                                + B[i][j][k];
+               }
+           }
+       }
+    }
+```
+
+
+## Array Information:
+- `A`: read-write
+- `B`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `N` = 320
+- `TSTEPS` = 20
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `heat_3d_kernel`
+2. Includes a Python wrapper function named `heat_3d_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def heat_3d_triton(A, B, N, TSTEPS):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 4 of 10. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

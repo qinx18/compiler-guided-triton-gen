@@ -10,13 +10,13 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.correlation.attempt1 import correlation_triton
+    from polybench_results_scale8x.llm_triton_no_analysis.correlation.attempt1 import correlation_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
 # Load C reference
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "libcorrelation.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "libcorrelation.so"
 if not C_LIB_PATH.exists():
     print(f"C reference library not found: {C_LIB_PATH}")
     sys.exit(1)
@@ -26,19 +26,19 @@ def run_c_reference(corr_c, data_c, mean_c, stddev_c, eps, float_n, M, N):
     lib = ctypes.CDLL(str(C_LIB_PATH))
 
     # Set global arrays in the .so
-    CType_corr = ctypes.c_float * (80 * 80)
+    CType_corr = ctypes.c_float * (640 * 640)
     c_arr_corr = CType_corr.in_dll(lib, 'corr')
     src_corr = np.ascontiguousarray(corr_c, dtype=np.float32)
     ctypes.memmove(c_arr_corr, src_corr.ctypes.data, src_corr.nbytes)
-    CType_data = ctypes.c_float * (100 * 80)
+    CType_data = ctypes.c_float * (800 * 640)
     c_arr_data = CType_data.in_dll(lib, 'data')
     src_data = np.ascontiguousarray(data_c, dtype=np.float32)
     ctypes.memmove(c_arr_data, src_data.ctypes.data, src_data.nbytes)
-    CType_mean = ctypes.c_float * (80)
+    CType_mean = ctypes.c_float * (640)
     c_arr_mean = CType_mean.in_dll(lib, 'mean')
     src_mean = np.ascontiguousarray(mean_c, dtype=np.float32)
     ctypes.memmove(c_arr_mean, src_mean.ctypes.data, src_mean.nbytes)
-    CType_stddev = ctypes.c_float * (80)
+    CType_stddev = ctypes.c_float * (640)
     c_arr_stddev = CType_stddev.in_dll(lib, 'stddev')
     src_stddev = np.ascontiguousarray(stddev_c, dtype=np.float32)
     ctypes.memmove(c_arr_stddev, src_stddev.ctypes.data, src_stddev.nbytes)
@@ -54,18 +54,18 @@ def run_c_reference(corr_c, data_c, mean_c, stddev_c, eps, float_n, M, N):
     func()
 
     # Read back output arrays
-    CType_corr = ctypes.c_float * (80 * 80)
+    CType_corr = ctypes.c_float * (640 * 640)
     c_arr_corr = CType_corr.in_dll(lib, 'corr')
-    corr_c[:] = np.frombuffer(c_arr_corr, dtype=np.float32).reshape(80, 80).copy()
-    CType_data = ctypes.c_float * (100 * 80)
+    corr_c[:] = np.frombuffer(c_arr_corr, dtype=np.float32).reshape(640, 640).copy()
+    CType_data = ctypes.c_float * (800 * 640)
     c_arr_data = CType_data.in_dll(lib, 'data')
-    data_c[:] = np.frombuffer(c_arr_data, dtype=np.float32).reshape(100, 80).copy()
-    CType_mean = ctypes.c_float * (80)
+    data_c[:] = np.frombuffer(c_arr_data, dtype=np.float32).reshape(800, 640).copy()
+    CType_mean = ctypes.c_float * (640)
     c_arr_mean = CType_mean.in_dll(lib, 'mean')
-    mean_c[:] = np.frombuffer(c_arr_mean, dtype=np.float32).reshape(80).copy()
-    CType_stddev = ctypes.c_float * (80)
+    mean_c[:] = np.frombuffer(c_arr_mean, dtype=np.float32).reshape(640).copy()
+    CType_stddev = ctypes.c_float * (640)
     c_arr_stddev = CType_stddev.in_dll(lib, 'stddev')
-    stddev_c[:] = np.frombuffer(c_arr_stddev, dtype=np.float32).reshape(80).copy()
+    stddev_c[:] = np.frombuffer(c_arr_stddev, dtype=np.float32).reshape(640).copy()
 
 def test_correctness():
     """Test Triton vs C reference."""
@@ -75,14 +75,14 @@ def test_correctness():
     for test_idx in range(num_tests):
         try:
             # Initialize arrays
-            corr = torch.randn(80, 80, device='cuda', dtype=torch.float32)
-            data = torch.randn(100, 80, device='cuda', dtype=torch.float32)
-            mean = torch.randn(80, device='cuda', dtype=torch.float32)
-            stddev = torch.randn(80, device='cuda', dtype=torch.float32)
+            corr = torch.randn(640, 640, device='cuda', dtype=torch.float32)
+            data = torch.randn(800, 640, device='cuda', dtype=torch.float32)
+            mean = torch.randn(640, device='cuda', dtype=torch.float32)
+            stddev = torch.randn(640, device='cuda', dtype=torch.float32)
             eps = 0.1
-            float_n = float(100)
-            M = 80
-            N = 100
+            float_n = float(800)
+            M = 640
+            N = 800
 
             # Clone for C reference
             corr_c = corr.cpu().numpy().copy()

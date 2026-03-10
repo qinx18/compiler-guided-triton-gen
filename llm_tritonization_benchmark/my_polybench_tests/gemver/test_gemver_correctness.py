@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for gemver (Polybench) - attempt 1"""
+"""Correctness test for gemver (Polybench) - attempt 3"""
 import sys
 import ctypes
 import numpy as np
@@ -10,13 +10,13 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.gemver.attempt1 import gemver_triton
+    from polybench_results_scale8x.llm_triton_no_analysis.gemver.attempt3 import gemver_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
 # Load C reference
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "libgemver.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "libgemver.so"
 if not C_LIB_PATH.exists():
     print(f"C reference library not found: {C_LIB_PATH}")
     sys.exit(1)
@@ -26,39 +26,39 @@ def run_c_reference(A_c, u1_c, u2_c, v1_c, v2_c, w_c, x_c, y_c, z_c, alpha, beta
     lib = ctypes.CDLL(str(C_LIB_PATH))
 
     # Set global arrays in the .so
-    CType_A = ctypes.c_float * (120 * 120)
+    CType_A = ctypes.c_float * (960 * 960)
     c_arr_A = CType_A.in_dll(lib, 'A')
     src_A = np.ascontiguousarray(A_c, dtype=np.float32)
     ctypes.memmove(c_arr_A, src_A.ctypes.data, src_A.nbytes)
-    CType_u1 = ctypes.c_float * (120)
+    CType_u1 = ctypes.c_float * (960)
     c_arr_u1 = CType_u1.in_dll(lib, 'u1')
     src_u1 = np.ascontiguousarray(u1_c, dtype=np.float32)
     ctypes.memmove(c_arr_u1, src_u1.ctypes.data, src_u1.nbytes)
-    CType_u2 = ctypes.c_float * (120)
+    CType_u2 = ctypes.c_float * (960)
     c_arr_u2 = CType_u2.in_dll(lib, 'u2')
     src_u2 = np.ascontiguousarray(u2_c, dtype=np.float32)
     ctypes.memmove(c_arr_u2, src_u2.ctypes.data, src_u2.nbytes)
-    CType_v1 = ctypes.c_float * (120)
+    CType_v1 = ctypes.c_float * (960)
     c_arr_v1 = CType_v1.in_dll(lib, 'v1')
     src_v1 = np.ascontiguousarray(v1_c, dtype=np.float32)
     ctypes.memmove(c_arr_v1, src_v1.ctypes.data, src_v1.nbytes)
-    CType_v2 = ctypes.c_float * (120)
+    CType_v2 = ctypes.c_float * (960)
     c_arr_v2 = CType_v2.in_dll(lib, 'v2')
     src_v2 = np.ascontiguousarray(v2_c, dtype=np.float32)
     ctypes.memmove(c_arr_v2, src_v2.ctypes.data, src_v2.nbytes)
-    CType_w = ctypes.c_float * (120)
+    CType_w = ctypes.c_float * (960)
     c_arr_w = CType_w.in_dll(lib, 'w')
     src_w = np.ascontiguousarray(w_c, dtype=np.float32)
     ctypes.memmove(c_arr_w, src_w.ctypes.data, src_w.nbytes)
-    CType_x = ctypes.c_float * (120)
+    CType_x = ctypes.c_float * (960)
     c_arr_x = CType_x.in_dll(lib, 'x')
     src_x = np.ascontiguousarray(x_c, dtype=np.float32)
     ctypes.memmove(c_arr_x, src_x.ctypes.data, src_x.nbytes)
-    CType_y = ctypes.c_float * (120)
+    CType_y = ctypes.c_float * (960)
     c_arr_y = CType_y.in_dll(lib, 'y')
     src_y = np.ascontiguousarray(y_c, dtype=np.float32)
     ctypes.memmove(c_arr_y, src_y.ctypes.data, src_y.nbytes)
-    CType_z = ctypes.c_float * (120)
+    CType_z = ctypes.c_float * (960)
     c_arr_z = CType_z.in_dll(lib, 'z')
     src_z = np.ascontiguousarray(z_c, dtype=np.float32)
     ctypes.memmove(c_arr_z, src_z.ctypes.data, src_z.nbytes)
@@ -74,15 +74,15 @@ def run_c_reference(A_c, u1_c, u2_c, v1_c, v2_c, w_c, x_c, y_c, z_c, alpha, beta
     func()
 
     # Read back output arrays
-    CType_A = ctypes.c_float * (120 * 120)
+    CType_A = ctypes.c_float * (960 * 960)
     c_arr_A = CType_A.in_dll(lib, 'A')
-    A_c[:] = np.frombuffer(c_arr_A, dtype=np.float32).reshape(120, 120).copy()
-    CType_w = ctypes.c_float * (120)
+    A_c[:] = np.frombuffer(c_arr_A, dtype=np.float32).reshape(960, 960).copy()
+    CType_w = ctypes.c_float * (960)
     c_arr_w = CType_w.in_dll(lib, 'w')
-    w_c[:] = np.frombuffer(c_arr_w, dtype=np.float32).reshape(120).copy()
-    CType_x = ctypes.c_float * (120)
+    w_c[:] = np.frombuffer(c_arr_w, dtype=np.float32).reshape(960).copy()
+    CType_x = ctypes.c_float * (960)
     c_arr_x = CType_x.in_dll(lib, 'x')
-    x_c[:] = np.frombuffer(c_arr_x, dtype=np.float32).reshape(120).copy()
+    x_c[:] = np.frombuffer(c_arr_x, dtype=np.float32).reshape(960).copy()
 
 def test_correctness():
     """Test Triton vs C reference."""
@@ -92,18 +92,18 @@ def test_correctness():
     for test_idx in range(num_tests):
         try:
             # Initialize arrays
-            A = torch.randn(120, 120, device='cuda', dtype=torch.float32)
-            u1 = torch.randn(120, device='cuda', dtype=torch.float32)
-            u2 = torch.randn(120, device='cuda', dtype=torch.float32)
-            v1 = torch.randn(120, device='cuda', dtype=torch.float32)
-            v2 = torch.randn(120, device='cuda', dtype=torch.float32)
-            w = torch.randn(120, device='cuda', dtype=torch.float32)
-            x = torch.randn(120, device='cuda', dtype=torch.float32)
-            y = torch.randn(120, device='cuda', dtype=torch.float32)
-            z = torch.randn(120, device='cuda', dtype=torch.float32)
+            A = torch.randn(960, 960, device='cuda', dtype=torch.float32)
+            u1 = torch.randn(960, device='cuda', dtype=torch.float32)
+            u2 = torch.randn(960, device='cuda', dtype=torch.float32)
+            v1 = torch.randn(960, device='cuda', dtype=torch.float32)
+            v2 = torch.randn(960, device='cuda', dtype=torch.float32)
+            w = torch.randn(960, device='cuda', dtype=torch.float32)
+            x = torch.randn(960, device='cuda', dtype=torch.float32)
+            y = torch.randn(960, device='cuda', dtype=torch.float32)
+            z = torch.randn(960, device='cuda', dtype=torch.float32)
             alpha = 1.5
             beta = 1.5
-            N = 120
+            N = 960
 
             # Clone for C reference
             A_c = A.cpu().numpy().copy()

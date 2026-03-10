@@ -1,0 +1,197 @@
+
+## PREVIOUS ATTEMPT FAILED - NUMERICAL ERROR
+
+Your last attempt produced incorrect numerical results.
+
+**Error type**: Numerical error (values don't match)
+**Max error observed**: 1.450377e+00
+
+Please fix the numerical computation. Common causes:
+- Incorrect loop bounds or indices
+- Wrong array access patterns (row-major vs column-major)
+- Missing or incorrect operations
+- Off-by-one errors
+- Cloning input arrays instead of modifying them in-place (the test checks the original tensors)
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def jacobi_2d_kernel(A_ptr, B_ptr, N: tl.constexpr, TSTEPS: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    # Get block indices
+    block_i = tl.program_id(0)
+    block_j = tl.program_id(1)
+    
+    # Calculate base indices for this block
+    base_i = 1 + block_i * BLOCK_SIZE
+    base_j = 1 + block_j * BLOCK_SIZE
+    
+    # Create offset arrays
+    i_offsets = tl.arange(0, BLOCK_SIZE)
+    j_offsets = tl.arange(0, BLOCK_SIZE)
+    
+    for t in range(TSTEPS):
+        # First phase: A -> B
+        for ii in range(BLOCK_SIZE):
+            for jj in range(BLOCK_SIZE):
+                i = base_i + ii
+                j = base_j + jj
+                
+                if i < N - 1 and j < N - 1:
+                    # Load the 5-point stencil from A
+                    center = tl.load(A_ptr + i * N + j)
+                    left = tl.load(A_ptr + i * N + (j - 1))
+                    right = tl.load(A_ptr + i * N + (j + 1))
+                    up = tl.load(A_ptr + (i - 1) * N + j)
+                    down = tl.load(A_ptr + (i + 1) * N + j)
+                    
+                    # Compute and store result
+                    result = 0.2 * (center + left + right + up + down)
+                    tl.store(B_ptr + i * N + j, result)
+        
+        # Second phase: B -> A
+        for ii in range(BLOCK_SIZE):
+            for jj in range(BLOCK_SIZE):
+                i = base_i + ii
+                j = base_j + jj
+                
+                if i < N - 1 and j < N - 1:
+                    # Load the 5-point stencil from B
+                    center = tl.load(B_ptr + i * N + j)
+                    left = tl.load(B_ptr + i * N + (j - 1))
+                    right = tl.load(B_ptr + i * N + (j + 1))
+                    up = tl.load(B_ptr + (i - 1) * N + j)
+                    down = tl.load(B_ptr + (i + 1) * N + j)
+                    
+                    # Compute and store result
+                    result = 0.2 * (center + left + right + up + down)
+                    tl.store(A_ptr + i * N + j, result)
+
+def jacobi_2d_triton(A, B, N, TSTEPS):
+    BLOCK_SIZE = 16
+    grid_size = triton.cdiv(N - 2, BLOCK_SIZE)
+    grid = (grid_size, grid_size)
+    
+    jacobi_2d_kernel[grid](
+        A, B, N, TSTEPS, BLOCK_SIZE
+    )
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define TSTEPS 40
+#define N 90
+
+float A[N][N];
+float B[N][N];
+
+void jacobi_2d_kernel() {
+  int t, i, j;
+#pragma scop
+  for (t = 0; t < TSTEPS; t++)
+    {
+      for (i = 1; i < N - 1; i++)
+	for (j = 1; j < N - 1; j++)
+	  B[i][j] = 0.2 * (A[i][j] + A[i][j-1] + A[i][1+j] + A[1+i][j] + A[i-1][j]);
+      for (i = 1; i < N - 1; i++)
+	for (j = 1; j < N - 1; j++)
+	  A[i][j] = 0.2 * (B[i][j] + B[i][j-1] + B[i][1+j] + B[1+i][j] + B[i-1][j]);
+    }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (t = 0; t < TSTEPS; t++)
+    {
+      for (i = 1; i < N - 1; i++)
+	for (j = 1; j < N - 1; j++)
+	  B[i][j] = 0.2 * (A[i][j] + A[i][j-1] + A[i][1+j] + A[1+i][j] + A[i-1][j]);
+      for (i = 1; i < N - 1; i++)
+	for (j = 1; j < N - 1; j++)
+	  A[i][j] = 0.2 * (B[i][j] + B[i][j-1] + B[i][1+j] + B[1+i][j] + B[i-1][j]);
+    }
+```
+
+
+## Array Information:
+- `A`: read-write
+- `B`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `N` = 720
+- `TSTEPS` = 40
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `jacobi_2d_kernel`
+2. Includes a Python wrapper function named `jacobi_2d_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def jacobi_2d_triton(A, B, N, TSTEPS):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 7 of 10. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

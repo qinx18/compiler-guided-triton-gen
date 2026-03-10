@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for deriche (Polybench) - attempt 3"""
+"""Correctness test for deriche (Polybench) - attempt 4"""
 import sys
 import ctypes
 import numpy as np
@@ -10,13 +10,13 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.deriche.attempt3 import deriche_triton
+    from polybench_results_scale8x.llm_triton_no_analysis.deriche.attempt4 import deriche_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
 # Load C reference
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "libderiche.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "libderiche.so"
 if not C_LIB_PATH.exists():
     print(f"C reference library not found: {C_LIB_PATH}")
     sys.exit(1)
@@ -26,19 +26,19 @@ def run_c_reference(imgIn_c, imgOut_c, y2_c, yy1_c, alpha, H, W):
     lib = ctypes.CDLL(str(C_LIB_PATH))
 
     # Set global arrays in the .so
-    CType_imgIn = ctypes.c_float * (192 * 128)
+    CType_imgIn = ctypes.c_float * (1536 * 1024)
     c_arr_imgIn = CType_imgIn.in_dll(lib, 'imgIn')
     src_imgIn = np.ascontiguousarray(imgIn_c, dtype=np.float32)
     ctypes.memmove(c_arr_imgIn, src_imgIn.ctypes.data, src_imgIn.nbytes)
-    CType_imgOut = ctypes.c_float * (192 * 128)
+    CType_imgOut = ctypes.c_float * (1536 * 1024)
     c_arr_imgOut = CType_imgOut.in_dll(lib, 'imgOut')
     src_imgOut = np.ascontiguousarray(imgOut_c, dtype=np.float32)
     ctypes.memmove(c_arr_imgOut, src_imgOut.ctypes.data, src_imgOut.nbytes)
-    CType_y2 = ctypes.c_float * (192 * 128)
+    CType_y2 = ctypes.c_float * (1536 * 1024)
     c_arr_y2 = CType_y2.in_dll(lib, 'y2')
     src_y2 = np.ascontiguousarray(y2_c, dtype=np.float32)
     ctypes.memmove(c_arr_y2, src_y2.ctypes.data, src_y2.nbytes)
-    CType_yy1 = ctypes.c_float * (192 * 128)
+    CType_yy1 = ctypes.c_float * (1536 * 1024)
     c_arr_yy1 = CType_yy1.in_dll(lib, 'yy1')
     src_yy1 = np.ascontiguousarray(yy1_c, dtype=np.float32)
     ctypes.memmove(c_arr_yy1, src_yy1.ctypes.data, src_yy1.nbytes)
@@ -53,15 +53,15 @@ def run_c_reference(imgIn_c, imgOut_c, y2_c, yy1_c, alpha, H, W):
     func()
 
     # Read back output arrays
-    CType_imgOut = ctypes.c_float * (192 * 128)
+    CType_imgOut = ctypes.c_float * (1536 * 1024)
     c_arr_imgOut = CType_imgOut.in_dll(lib, 'imgOut')
-    imgOut_c[:] = np.frombuffer(c_arr_imgOut, dtype=np.float32).reshape(192, 128).copy()
-    CType_y2 = ctypes.c_float * (192 * 128)
+    imgOut_c[:] = np.frombuffer(c_arr_imgOut, dtype=np.float32).reshape(1536, 1024).copy()
+    CType_y2 = ctypes.c_float * (1536 * 1024)
     c_arr_y2 = CType_y2.in_dll(lib, 'y2')
-    y2_c[:] = np.frombuffer(c_arr_y2, dtype=np.float32).reshape(192, 128).copy()
-    CType_yy1 = ctypes.c_float * (192 * 128)
+    y2_c[:] = np.frombuffer(c_arr_y2, dtype=np.float32).reshape(1536, 1024).copy()
+    CType_yy1 = ctypes.c_float * (1536 * 1024)
     c_arr_yy1 = CType_yy1.in_dll(lib, 'yy1')
-    yy1_c[:] = np.frombuffer(c_arr_yy1, dtype=np.float32).reshape(192, 128).copy()
+    yy1_c[:] = np.frombuffer(c_arr_yy1, dtype=np.float32).reshape(1536, 1024).copy()
 
 def test_correctness():
     """Test Triton vs C reference."""
@@ -71,13 +71,13 @@ def test_correctness():
     for test_idx in range(num_tests):
         try:
             # Initialize arrays
-            imgIn = torch.randn(192, 128, device='cuda', dtype=torch.float32)
-            imgOut = torch.randn(192, 128, device='cuda', dtype=torch.float32)
-            y2 = torch.randn(192, 128, device='cuda', dtype=torch.float32)
-            yy1 = torch.randn(192, 128, device='cuda', dtype=torch.float32)
+            imgIn = torch.randn(1536, 1024, device='cuda', dtype=torch.float32)
+            imgOut = torch.randn(1536, 1024, device='cuda', dtype=torch.float32)
+            y2 = torch.randn(1536, 1024, device='cuda', dtype=torch.float32)
+            yy1 = torch.randn(1536, 1024, device='cuda', dtype=torch.float32)
             alpha = 1.5
-            H = 128
-            W = 192
+            H = 1024
+            W = 1536
 
             # Clone for C reference
             imgIn_c = imgIn.cpu().numpy().copy()

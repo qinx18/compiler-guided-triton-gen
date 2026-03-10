@@ -1,0 +1,182 @@
+
+## PREVIOUS ATTEMPT FAILED - NUMERICAL ERROR
+
+Your last attempt produced incorrect numerical results.
+
+**Error type**: Numerical error (values don't match)
+**Max error observed**: 1.511843e+00
+
+Please fix the numerical computation. Common causes:
+- Incorrect loop bounds or indices
+- Wrong array access patterns (row-major vs column-major)
+- Missing or incorrect operations
+- Off-by-one errors
+- Cloning input arrays instead of modifying them in-place (the test checks the original tensors)
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def seidel_2d_kernel(A_ptr, N: tl.constexpr, TSTEPS: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    pid_i = tl.program_id(0)
+    pid_j = tl.program_id(1)
+    
+    i_start = pid_i * BLOCK_SIZE + 1
+    j_start = pid_j * BLOCK_SIZE + 1
+    
+    i_offsets = tl.arange(0, BLOCK_SIZE)
+    j_offsets = tl.arange(0, BLOCK_SIZE)
+    
+    for t in range(TSTEPS):
+        for i_idx in range(BLOCK_SIZE):
+            i = i_start + i_idx
+            if i < N - 1:
+                j_indices = j_start + j_offsets
+                mask = j_indices < N - 1
+                
+                # Calculate addresses for the 9-point stencil
+                center_addr = i * N + j_indices
+                top_addr = (i - 1) * N + j_indices
+                bottom_addr = (i + 1) * N + j_indices
+                
+                # Load 9 neighbors
+                top_left = tl.load(A_ptr + top_addr - 1, mask=mask, other=0.0)
+                top_center = tl.load(A_ptr + top_addr, mask=mask, other=0.0)
+                top_right = tl.load(A_ptr + top_addr + 1, mask=mask, other=0.0)
+                
+                center_left = tl.load(A_ptr + center_addr - 1, mask=mask, other=0.0)
+                center = tl.load(A_ptr + center_addr, mask=mask, other=0.0)
+                center_right = tl.load(A_ptr + center_addr + 1, mask=mask, other=0.0)
+                
+                bottom_left = tl.load(A_ptr + bottom_addr - 1, mask=mask, other=0.0)
+                bottom_center = tl.load(A_ptr + bottom_addr, mask=mask, other=0.0)
+                bottom_right = tl.load(A_ptr + bottom_addr + 1, mask=mask, other=0.0)
+                
+                # Compute average
+                result = (top_left + top_center + top_right +
+                         center_left + center + center_right +
+                         bottom_left + bottom_center + bottom_right) / 9.0
+                
+                # Store result
+                tl.store(A_ptr + center_addr, result, mask=mask)
+
+def seidel_2d_triton(A, N, TSTEPS):
+    BLOCK_SIZE = 32
+    grid_i = triton.cdiv(N - 2, BLOCK_SIZE)
+    grid_j = triton.cdiv(N - 2, BLOCK_SIZE)
+    
+    seidel_2d_kernel[(grid_i, grid_j)](
+        A, N, TSTEPS, BLOCK_SIZE
+    )
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define TSTEPS 40
+#define N 120
+
+float A[N][N];
+
+void seidel_2d_kernel() {
+  int t, i, j;
+#pragma scop
+  for (t = 0; t <= TSTEPS - 1; t++)
+    for (i = 1; i<= N - 2; i++)
+      for (j = 1; j <= N - 2; j++)
+	A[i][j] = (A[i-1][j-1] + A[i-1][j] + A[i-1][j+1]
+		   + A[i][j-1] + A[i][j] + A[i][j+1]
+		   + A[i+1][j-1] + A[i+1][j] + A[i+1][j+1])/9.0;
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for (t = 0; t <= TSTEPS - 1; t++)
+    for (i = 1; i<= N - 2; i++)
+      for (j = 1; j <= N - 2; j++)
+	A[i][j] = (A[i-1][j-1] + A[i-1][j] + A[i-1][j+1]
+		   + A[i][j-1] + A[i][j] + A[i][j+1]
+		   + A[i+1][j-1] + A[i+1][j] + A[i+1][j+1])/9.0;
+```
+
+
+## Array Information:
+- `A`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `N` = 960
+- `TSTEPS` = 40
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `seidel_2d_kernel`
+2. Includes a Python wrapper function named `seidel_2d_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def seidel_2d_triton(A, N, TSTEPS):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 10 of 10. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

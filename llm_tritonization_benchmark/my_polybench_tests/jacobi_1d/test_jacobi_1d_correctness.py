@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for jacobi_1d (Polybench) - attempt 4"""
+"""Correctness test for jacobi_1d (Polybench) - attempt 10"""
 import sys
 import ctypes
 import numpy as np
@@ -10,13 +10,13 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.jacobi_1d.attempt4 import jacobi_1d_triton
+    from polybench_results_scale8x.llm_triton_no_analysis.jacobi_1d.attempt10 import jacobi_1d_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
 # Load C reference
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "libjacobi_1d.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "libjacobi_1d.so"
 if not C_LIB_PATH.exists():
     print(f"C reference library not found: {C_LIB_PATH}")
     sys.exit(1)
@@ -26,11 +26,11 @@ def run_c_reference(A_c, B_c, N, TSTEPS):
     lib = ctypes.CDLL(str(C_LIB_PATH))
 
     # Set global arrays in the .so
-    CType_A = ctypes.c_float * (120)
+    CType_A = ctypes.c_float * (960)
     c_arr_A = CType_A.in_dll(lib, 'A')
     src_A = np.ascontiguousarray(A_c, dtype=np.float32)
     ctypes.memmove(c_arr_A, src_A.ctypes.data, src_A.nbytes)
-    CType_B = ctypes.c_float * (120)
+    CType_B = ctypes.c_float * (960)
     c_arr_B = CType_B.in_dll(lib, 'B')
     src_B = np.ascontiguousarray(B_c, dtype=np.float32)
     ctypes.memmove(c_arr_B, src_B.ctypes.data, src_B.nbytes)
@@ -45,12 +45,12 @@ def run_c_reference(A_c, B_c, N, TSTEPS):
     func()
 
     # Read back output arrays
-    CType_A = ctypes.c_float * (120)
+    CType_A = ctypes.c_float * (960)
     c_arr_A = CType_A.in_dll(lib, 'A')
-    A_c[:] = np.frombuffer(c_arr_A, dtype=np.float32).reshape(120).copy()
-    CType_B = ctypes.c_float * (120)
+    A_c[:] = np.frombuffer(c_arr_A, dtype=np.float32).reshape(960).copy()
+    CType_B = ctypes.c_float * (960)
     c_arr_B = CType_B.in_dll(lib, 'B')
-    B_c[:] = np.frombuffer(c_arr_B, dtype=np.float32).reshape(120).copy()
+    B_c[:] = np.frombuffer(c_arr_B, dtype=np.float32).reshape(960).copy()
 
 def test_correctness():
     """Test Triton vs C reference."""
@@ -60,9 +60,9 @@ def test_correctness():
     for test_idx in range(num_tests):
         try:
             # Initialize arrays
-            A = torch.randn(120, device='cuda', dtype=torch.float32)
-            B = torch.randn(120, device='cuda', dtype=torch.float32)
-            N = 120
+            A = torch.randn(960, device='cuda', dtype=torch.float32)
+            B = torch.randn(960, device='cuda', dtype=torch.float32)
+            N = 960
             TSTEPS = 40
 
             # Clone for C reference

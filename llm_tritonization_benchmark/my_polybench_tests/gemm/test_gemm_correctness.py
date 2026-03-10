@@ -10,13 +10,13 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results.llm_triton.gemm.attempt1 import gemm_triton
+    from polybench_results_scale8x.llm_triton_no_analysis.gemm.attempt1 import gemm_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
 # Load C reference
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "libgemm.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "libgemm.so"
 if not C_LIB_PATH.exists():
     print(f"C reference library not found: {C_LIB_PATH}")
     sys.exit(1)
@@ -26,15 +26,15 @@ def run_c_reference(A_c, B_c, C_c, alpha, beta, NI, NJ, NK):
     lib = ctypes.CDLL(str(C_LIB_PATH))
 
     # Set global arrays in the .so
-    CType_A = ctypes.c_float * (60 * 80)
+    CType_A = ctypes.c_float * (480 * 640)
     c_arr_A = CType_A.in_dll(lib, 'A')
     src_A = np.ascontiguousarray(A_c, dtype=np.float32)
     ctypes.memmove(c_arr_A, src_A.ctypes.data, src_A.nbytes)
-    CType_B = ctypes.c_float * (80 * 70)
+    CType_B = ctypes.c_float * (640 * 560)
     c_arr_B = CType_B.in_dll(lib, 'B')
     src_B = np.ascontiguousarray(B_c, dtype=np.float32)
     ctypes.memmove(c_arr_B, src_B.ctypes.data, src_B.nbytes)
-    CType_C = ctypes.c_float * (60 * 70)
+    CType_C = ctypes.c_float * (480 * 560)
     c_arr_C = CType_C.in_dll(lib, 'C')
     src_C = np.ascontiguousarray(C_c, dtype=np.float32)
     ctypes.memmove(c_arr_C, src_C.ctypes.data, src_C.nbytes)
@@ -50,9 +50,9 @@ def run_c_reference(A_c, B_c, C_c, alpha, beta, NI, NJ, NK):
     func()
 
     # Read back output arrays
-    CType_C = ctypes.c_float * (60 * 70)
+    CType_C = ctypes.c_float * (480 * 560)
     c_arr_C = CType_C.in_dll(lib, 'C')
-    C_c[:] = np.frombuffer(c_arr_C, dtype=np.float32).reshape(60, 70).copy()
+    C_c[:] = np.frombuffer(c_arr_C, dtype=np.float32).reshape(480, 560).copy()
 
 def test_correctness():
     """Test Triton vs C reference."""
@@ -62,14 +62,14 @@ def test_correctness():
     for test_idx in range(num_tests):
         try:
             # Initialize arrays
-            A = torch.randn(60, 80, device='cuda', dtype=torch.float32)
-            B = torch.randn(80, 70, device='cuda', dtype=torch.float32)
-            C = torch.randn(60, 70, device='cuda', dtype=torch.float32)
+            A = torch.randn(480, 640, device='cuda', dtype=torch.float32)
+            B = torch.randn(640, 560, device='cuda', dtype=torch.float32)
+            C = torch.randn(480, 560, device='cuda', dtype=torch.float32)
             alpha = 1.5
             beta = 1.5
-            NI = 60
-            NJ = 70
-            NK = 80
+            NI = 480
+            NJ = 560
+            NK = 640
 
             # Clone for C reference
             A_c = A.cpu().numpy().copy()

@@ -10,28 +10,28 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results.llm_triton.ludcmp.attempt1 import ludcmp_triton
+    from polybench_results_scale8x.llm_triton_no_analysis.ludcmp.attempt1 import ludcmp_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs" / "libludcmp.so"
+C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "polybench_libs_scale8x" / "libludcmp.so"
 
 def run_c_reference(A_c, b_c, x_c, y_c, N):
     lib = ctypes.CDLL(str(C_LIB_PATH))
-    CType_A = ctypes.c_float * (120 * 120)
+    CType_A = ctypes.c_float * (960 * 960)
     c_arr_A = CType_A.in_dll(lib, 'A')
     src_A = np.ascontiguousarray(A_c, dtype=np.float32)
     ctypes.memmove(c_arr_A, src_A.ctypes.data, src_A.nbytes)
-    CType_b = ctypes.c_float * (120)
+    CType_b = ctypes.c_float * (960)
     c_arr_b = CType_b.in_dll(lib, 'b')
     src_b = np.ascontiguousarray(b_c, dtype=np.float32)
     ctypes.memmove(c_arr_b, src_b.ctypes.data, src_b.nbytes)
-    CType_x = ctypes.c_float * (120)
+    CType_x = ctypes.c_float * (960)
     c_arr_x = CType_x.in_dll(lib, 'x')
     src_x = np.ascontiguousarray(x_c, dtype=np.float32)
     ctypes.memmove(c_arr_x, src_x.ctypes.data, src_x.nbytes)
-    CType_y = ctypes.c_float * (120)
+    CType_y = ctypes.c_float * (960)
     c_arr_y = CType_y.in_dll(lib, 'y')
     src_y = np.ascontiguousarray(y_c, dtype=np.float32)
     ctypes.memmove(c_arr_y, src_y.ctypes.data, src_y.nbytes)
@@ -40,20 +40,20 @@ def run_c_reference(A_c, b_c, x_c, y_c, N):
     func.argtypes = []
     func.restype = None
     func()
-    CType_x = ctypes.c_float * (120)
+    CType_x = ctypes.c_float * (960)
     c_arr_x = CType_x.in_dll(lib, 'x')
-    x_c[:] = np.frombuffer(c_arr_x, dtype=np.float32).reshape(120).copy()
+    x_c[:] = np.frombuffer(c_arr_x, dtype=np.float32).reshape(960).copy()
 
 def benchmark():
     num_warmup = 5
     num_iterations = 50
 
     # Diagonally dominant for stable pivotless LU; x,y are outputs
-    A = torch.randn(120, 120, device='cuda', dtype=torch.float32) + 120 * torch.eye(120, device='cuda', dtype=torch.float32)
-    b = torch.randn(120, device='cuda', dtype=torch.float32)
-    x = torch.zeros(120, device='cuda', dtype=torch.float32)
-    y = torch.zeros(120, device='cuda', dtype=torch.float32)
-    N = 120
+    A = torch.randn(960, 960, device='cuda', dtype=torch.float32) + 960 * torch.eye(960, device='cuda', dtype=torch.float32)
+    b = torch.randn(960, device='cuda', dtype=torch.float32)
+    x = torch.zeros(960, device='cuda', dtype=torch.float32)
+    y = torch.zeros(960, device='cuda', dtype=torch.float32)
+    N = 960
 
     # C reference benchmark
     c_time = None
