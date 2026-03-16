@@ -2,14 +2,14 @@
   "2mm": {
     "triton_generated": true,
     "test_passed": true,
-    "attempts": 10,
-    "final_attempt": 9,
+    "attempts": 1,
+    "final_error": null,
     "benchmark": {
-      "c_ref_time_ms": 160.600491,
-      "triton_time_ms": 2249.254508,
-      "speedup": 0.071402
+      "c_ref_time_ms": 158.583869,
+      "triton_time_ms": 0.10469,
+      "speedup": 1514.799281
     },
-    "final_error": null
+    "final_attempt": 1
   },
   "3mm": {
     "triton_generated": true,
@@ -25,13 +25,15 @@
   },
   "adi": {
     "triton_generated": true,
-    "test_passed": false,
-    "attempts": 10,
+    "test_passed": true,
+    "attempts": 3,
     "final_error": {
       "type": "numerical",
-      "message": "abs_error=2.981186e-03 rel_error=5.295238e-04",
-      "max_error": "2.981186e-03"
-    }
+      "message": "abs_error=1.279778e+01 rel_error=3.741765e+00",
+      "max_error": "1.279778e+01"
+    },
+    "benchmark": null,
+    "final_attempt": 3
   },
   "atax": {
     "triton_generated": true,
@@ -84,14 +86,18 @@
   "covariance": {
     "triton_generated": true,
     "test_passed": true,
-    "attempts": 1,
-    "final_error": null,
-    "benchmark": {
-      "c_ref_time_ms": 201.051014,
-      "triton_time_ms": 295.448047,
-      "speedup": 0.680495
+    "attempts": 6,
+    "final_error": {
+      "type": "numerical",
+      "message": "abs_error=4.885359e+00 rel_error=4.140405e+00",
+      "max_error": "4.885359e+00"
     },
-    "final_attempt": 1
+    "benchmark": {
+      "c_ref_time_ms": 192.091976,
+      "triton_time_ms": 4.128827,
+      "speedup": 46.524587
+    },
+    "final_attempt": 6
   },
   "deriche": {
     "triton_generated": true,
@@ -111,17 +117,14 @@
   "doitgen": {
     "triton_generated": true,
     "test_passed": true,
-    "attempts": 2,
-    "final_error": {
-      "type": "unknown",
-      "message": "  Test 1: ERROR - at 15:21:\n\n    # Calculate offsets for p dimension\n    p_offsets = pid_p * BLOCK_P + tl.arange(0, BLOCK_P)\n    p_mask = p_offsets < NP\n\n    # Initialize sum values to 0\n    sum_vals = tl.zeros([BLOCK_P], dtype=tl.float32)\n\n    # Compute sum[p] = sum over s of A[r][q][s] * C4[s][p]\n    for s in range(NP):\n        # Load A[r][q][s] - this is a scalar for all p values\n        a_idx = r * (NQ * NP) + q * NP + s\n                     ^\nNameError('NQ is not defined')\n  Test 2: ERROR - at 15:21:\n\n    # Calculate offsets for p dimension\n    p_offsets = pid_p * BLOCK_P + tl.arange(0, BLOCK_P)\n    p_mask = p_offsets < NP\n\n    # Initialize sum values to 0\n    sum_vals = tl.zeros([BLOCK_P], dtype=tl.float32)\n\n    # Compute sum[p] = sum over s of A[r][q][s] * C4[s][p]\n    for s in range(NP):\n        # Load A[r][q][s] - this is a scalar for all p values\n        a_idx = r * (NQ * NP) + q * NP + s\n                     ^\nNameError('NQ is not defined')\n  Test 3: ERROR - at 15:21:\n\n    # Calculate offsets for p dimension\n    p_offsets = pid_p * BLOCK_P + tl.arange(0, BLOCK_P)\n    p_mask = p_offsets < NP\n\n    # Initialize sum values to 0\n    sum_vals = tl.zeros([BLOCK_P], dtype=tl.float32)\n\n    # Compute sum[p] = sum over s of A[r][q][s] * C4[s][p]\n    for s in range(NP):\n        # Load A[r][q][s] - this is a scalar for all p values\n        a_idx = r * (NQ * NP) + q * NP + s\n                     ^\nNameError('NQ is not defined')\nSome tests FAILED!\n"
-    },
+    "attempts": 1,
+    "final_error": null,
     "benchmark": {
-      "c_ref_time_ms": 1821.713142,
-      "triton_time_ms": 1202.002324,
-      "speedup": 1.515565
+      "c_ref_time_ms": 1853.590244,
+      "triton_time_ms": 1.444438,
+      "speedup": 1283.260917
     },
-    "final_attempt": 2
+    "final_attempt": 1
   },
   "durbin": {
     "triton_generated": true,
@@ -142,14 +145,17 @@
   "fdtd_2d": {
     "triton_generated": true,
     "test_passed": true,
-    "attempts": 1,
-    "final_error": null,
-    "benchmark": {
-      "c_ref_time_ms": 15.55927,
-      "triton_time_ms": 20.50706,
-      "speedup": 0.758727
+    "attempts": 4,
+    "final_error": {
+      "type": "unknown",
+      "message": "  Test 1: ERROR - dynamic_func() takes 5 positional arguments but 8 were given\n  Test 2: ERROR - dynamic_func() takes 5 positional arguments but 8 were given\n  Test 3: ERROR - dynamic_func() takes 5 positional arguments but 8 were given\nSome tests FAILED!\n"
     },
-    "final_attempt": 1
+    "benchmark": {
+      "c_ref_time_ms": 16.481754,
+      "triton_time_ms": 1.068176,
+      "speedup": 15.429814
+    },
+    "final_attempt": 4
   },
   "floyd_warshall": {
     "triton_generated": true,
@@ -220,27 +226,23 @@
     "attempts": 1,
     "final_error": null,
     "benchmark": {
-      "c_ref_time_ms": 3185.669631,
-      "triton_time_ms": 12.853583,
-      "speedup": 247.842923
+      "c_ref_time_ms": 3057.26392,
+      "triton_time_ms": 12.934856,
+      "speedup": 236.358567
     },
     "final_attempt": 1
   },
   "jacobi_1d": {
     "triton_generated": true,
     "test_passed": true,
-    "attempts": 9,
-    "final_error": {
-      "type": "numerical",
-      "message": "abs_error=1.409524e+00 rel_error=1.450388e+00",
-      "max_error": "1.409524e+00"
-    },
+    "attempts": 2,
+    "final_error": null,
     "benchmark": {
-      "c_ref_time_ms": 0.128309,
-      "triton_time_ms": 0.940218,
-      "speedup": 0.136467
+      "c_ref_time_ms": 0.133182,
+      "triton_time_ms": 0.047254,
+      "speedup": 2.818424
     },
-    "final_attempt": 9
+    "final_attempt": 2
   },
   "jacobi_2d": {
     "triton_generated": true,
@@ -248,9 +250,9 @@
     "attempts": 1,
     "final_error": null,
     "benchmark": {
-      "c_ref_time_ms": 35.020179,
-      "triton_time_ms": 32.701793,
-      "speedup": 1.070895
+      "c_ref_time_ms": 34.634309,
+      "triton_time_ms": 0.940742,
+      "speedup": 36.815943
     },
     "final_attempt": 1
   },

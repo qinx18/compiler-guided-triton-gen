@@ -1,5 +1,5 @@
 # LLM-Generated Triton Implementation for jacobi_1d (Polybench)
-# Generated: 2026-03-09 13:57:24
+# Generated: 2026-03-12 16:21:55
 # Model: claude-sonnet-4-20250514
 
 ================================================================================
@@ -47,10 +47,21 @@ for (t = 0; t < TSTEPS; t++)
 
 **Loop dimensions**: ['t', 'i']
 
-- Parallelize `i`, sequential `t`: VALID
+- Parallelize `i`, sequential `t`: VALID (vectorize within single CTA — MUST use grid=(1,), see below)
 
 - Parallelize `t`, sequential `i`: INVALID
   - Cross-phase dependency: different loop bodies under `t` read/write the same arrays (e.g., phase 1 writes B, phase 2 reads B)
+
+
+## Common Mistakes to AVOID
+
+1. **NEVER use Python for-loops to launch many small kernels.** If you have sequential dims `r, q` and parallel dim `p`, do NOT write `for r in range(NR): for q in range(NQ): kernel[grid](...)`. Instead, fuse them: `grid = (NR * NQ * cdiv(NP, BLOCK),)` and inside the kernel compute `r = pid // (NQ * NP_blocks)`, `q = (pid // NP_blocks) % NQ`, `p_start = (pid % NP_blocks) * BLOCK`.
+
+2. **NEVER write parallel kernels then call a serial fallback.** If you write tiled/vectorized phase kernels (e.g., `phase1_kernel`, `phase2_kernel`), the host function MUST call them. Do NOT add a serial `grid=(1,)` wrapper that ignores the parallel implementations.
+
+3. **Use `tl.dot()` for ALL matrix multiply and outer-product accumulations.** NEVER use scalar triple-nested loops (`for i: for j: for k: acc += a[i,k]*b[k,j]`) inside a Triton kernel. Tile with BLOCK_SIZE and use `acc += tl.dot(a_tile, b_tile)`.
+
+4. **For stencil kernels with `grid=(1,)` guidance: NEVER use multi-block grids.** If the analysis says `grid=(1,)`, do NOT use `grid=(triton.cdiv(N, BLOCK),)`. Multiple CTAs cannot synchronize between phases — CTA 0 may read stale values written by CTA 1. Use `BLOCK = triton.next_power_of_2(N)` so one CTA covers ALL elements.
 
 
 ## Array Information:
@@ -131,32 +142,53 @@ import torch
 
 @triton.jit
 def jacobi_1d_kernel(A_ptr, B_ptr, N: tl.constexpr, TSTEPS: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    # Single CTA handles all elements
     pid = tl.program_id(0)
-    block_start = pid * BLOCK_SIZE
+    if pid != 0:
+        return
+    
+    # Pre-compute offsets once
     offsets = tl.arange(0, BLOCK_SIZE)
-    indices = block_start + offsets
-    mask = (indices >= 1) & (indices < N - 1)
     
     for t in range(TSTEPS):
-        # First phase: B[i] = 0.33333 * (A[i-1] + A[i] + A[i+1])
-        A_left = tl.load(A_ptr + indices - 1, mask=mask)
-        A_center = tl.load(A_ptr + indices, mask=mask)
-        A_right = tl.load(A_ptr + indices + 1, mask=mask)
-        B_new = 0.33333 * (A_left + A_center + A_right)
-        tl.store(B_ptr + indices, B_new, mask=mask)
+        # Phase 1: B[i] = 0.33333 * (A[i-1] + A[i] + A[i+1])
+        for block_start in range(1, N - 1, BLOCK_SIZE):
+            current_offsets = block_start + offsets
+            mask = (current_offsets >= 1) & (current_offsets < N - 1)
+            
+            # Load A[i-1], A[i], A[i+1]
+            a_left = tl.load(A_ptr + current_offsets - 1, mask=mask)
+            a_center = tl.load(A_ptr + current_offsets, mask=mask)
+            a_right = tl.load(A_ptr + current_offsets + 1, mask=mask)
+            
+            # Compute B[i]
+            b_val = 0.33333 * (a_left + a_center + a_right)
+            
+            # Store B[i]
+            tl.store(B_ptr + current_offsets, b_val, mask=mask)
         
-        # Second phase: A[i] = 0.33333 * (B[i-1] + B[i] + B[i+1])
-        B_left = tl.load(B_ptr + indices - 1, mask=mask)
-        B_center = tl.load(B_ptr + indices, mask=mask)
-        B_right = tl.load(B_ptr + indices + 1, mask=mask)
-        A_new = 0.33333 * (B_left + B_center + B_right)
-        tl.store(A_ptr + indices, A_new, mask=mask)
+        # Phase 2: A[i] = 0.33333 * (B[i-1] + B[i] + B[i+1])
+        for block_start in range(1, N - 1, BLOCK_SIZE):
+            current_offsets = block_start + offsets
+            mask = (current_offsets >= 1) & (current_offsets < N - 1)
+            
+            # Load B[i-1], B[i], B[i+1]
+            b_left = tl.load(B_ptr + current_offsets - 1, mask=mask)
+            b_center = tl.load(B_ptr + current_offsets, mask=mask)
+            b_right = tl.load(B_ptr + current_offsets + 1, mask=mask)
+            
+            # Compute A[i]
+            a_val = 0.33333 * (b_left + b_center + b_right)
+            
+            # Store A[i]
+            tl.store(A_ptr + current_offsets, a_val, mask=mask)
 
 def jacobi_1d_triton(A, B, N, TSTEPS):
-    BLOCK_SIZE = 64
-    grid = (triton.cdiv(N, BLOCK_SIZE),)
+    BLOCK_SIZE = triton.next_power_of_2(N)
+    grid = (1,)
     
     jacobi_1d_kernel[grid](
-        A, B, N, TSTEPS, BLOCK_SIZE
+        A, B,
+        N=N, TSTEPS=TSTEPS, BLOCK_SIZE=BLOCK_SIZE
     )
 ```

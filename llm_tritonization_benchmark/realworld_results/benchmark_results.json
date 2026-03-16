@@ -1,0 +1,17 @@
+{
+  "srad": {
+    "c_ref_time_ms": 30.380596,
+    "triton_time_ms": 1.222307,
+    "speedup": 24.855125
+  },
+  "gaussian": {
+    "c_ref_time_ms": 12.132168,
+    "triton_time_ms": 3.616255,
+    "speedup": 3.354898
+  },
+  "lavaMD": {
+    "c_ref_time_ms": 182.169996,
+    "triton_time_ms": 123.960277,
+    "speedup": 1.469584
+  }
+}

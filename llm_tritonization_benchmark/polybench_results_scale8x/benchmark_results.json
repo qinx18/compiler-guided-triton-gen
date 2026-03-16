@@ -1,8 +1,8 @@
 {
   "2mm": {
-    "c_ref_time_ms": 159.773688,
-    "triton_time_ms": 1.614137,
-    "speedup": 98.983975
+    "c_ref_time_ms": 158.583869,
+    "triton_time_ms": 0.10469,
+    "speedup": 1514.799281
   },
   "3mm": {
     "c_ref_time_ms": 293.180373,
@@ -25,9 +25,9 @@
     "speedup": 0.29533
   },
   "covariance": {
-    "c_ref_time_ms": 196.75665,
-    "triton_time_ms": 1495.461112,
-    "speedup": 0.131569
+    "c_ref_time_ms": 192.091976,
+    "triton_time_ms": 4.128827,
+    "speedup": 46.524587
   },
   "deriche": {
     "c_ref_time_ms": 64.740732,
@@ -35,9 +35,9 @@
     "speedup": 22.17653
   },
   "doitgen": {
-    "c_ref_time_ms": 1916.78922,
-    "triton_time_ms": 1200.225496,
-    "speedup": 1.597024
+    "c_ref_time_ms": 1853.590244,
+    "triton_time_ms": 1.444438,
+    "speedup": 1283.260917
   },
   "durbin": {
     "c_ref_time_ms": 0.708518,
@@ -45,9 +45,9 @@
     "speedup": 0.366949
   },
   "fdtd_2d": {
-    "c_ref_time_ms": 16.554186,
-    "triton_time_ms": 20.58934,
-    "speedup": 0.804017
+    "c_ref_time_ms": 16.481754,
+    "triton_time_ms": 1.068176,
+    "speedup": 15.429814
   },
   "floyd_warshall": {
     "c_ref_time_ms": 498.331334,
@@ -75,19 +75,19 @@
     "speedup": 0.408239
   },
   "heat_3d": {
-    "c_ref_time_ms": 3185.669631,
-    "triton_time_ms": 12.853583,
-    "speedup": 247.842923
+    "c_ref_time_ms": 3057.26392,
+    "triton_time_ms": 12.934856,
+    "speedup": 236.358567
   },
   "jacobi_1d": {
-    "c_ref_time_ms": 0.12356,
-    "triton_time_ms": 0.932228,
-    "speedup": 0.132542
+    "c_ref_time_ms": 0.133182,
+    "triton_time_ms": 0.047254,
+    "speedup": 2.818424
   },
   "jacobi_2d": {
-    "c_ref_time_ms": 35.020179,
-    "triton_time_ms": 32.701793,
-    "speedup": 1.070895
+    "c_ref_time_ms": 34.634309,
+    "triton_time_ms": 0.940742,
+    "speedup": 36.815943
   },
   "lu": {
     "c_ref_time_ms": 342.777541,

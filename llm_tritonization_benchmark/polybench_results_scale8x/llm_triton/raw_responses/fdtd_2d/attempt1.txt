@@ -1,5 +1,5 @@
 # LLM-Generated Triton Implementation for fdtd_2d (Polybench)
-# Generated: 2026-03-09 13:48:18
+# Generated: 2026-03-12 16:12:17
 # Model: claude-sonnet-4-20250514
 
 ================================================================================
@@ -75,20 +75,42 @@ for(t = 0; t < TMAX; t++)
 
 **Both `j` and `i` are freely parallelizable.** Use a 2D grid to parallelize both simultaneously for best GPU occupancy.
 
-**CRITICAL: Timestep/phase structure**: Use `grid=(1,)` with the `t` loop **INSIDE** the kernel. This puts everything in a single kernel launch, avoiding kernel launch overhead entirely.
-```python
-kernel[grid=(1,)](...)  # ONE kernel launch — t loop inside
-```
-With `grid=(1,)` (single thread block), the `t` loop inside the kernel is correct — there are no cross-CTA race conditions because there is only one CTA. All phases execute sequentially within each timestep, and the `t` loop iterates normally.
+**CRITICAL: Timestep/phase structure**: The `t` loop must be in **Python host code**, NOT inside the Triton kernel.
+Do NOT put `for t in range(...)` inside the Triton kernel — there is no global synchronization between timesteps within a single kernel launch, which causes **race conditions** on shared arrays.
 
-**Inside the kernel**: Use 2D tiling to process all elements:
+**Use at most 2 kernels per timestep**. Fuse independent phases into a single kernel.
+
+**Parallelize ALL spatial dimensions**: Flatten all spatial dimensions into a single 1D index. Each CTA processes a block of elements from the flattened space, recovering multi-dim coordinates from the linear index.
+
+**Use BLOCK_SIZE = 128** (not larger) to maximize the number of CTAs and GPU occupancy.
 ```python
+BLOCK_SIZE = 128
+total_elements = N_DIM0 * N_DIM1  # all spatial dims (add more if 3D+)
+grid = (triton.cdiv(total_elements, BLOCK_SIZE),)
 for t in range(TSTEPS):
-    for row_start in range(0, N_ROWS, BLOCK_ROW):
-        for col_start in range(0, N_COLS, BLOCK_COL):
-            # vectorize within each tile
+    phase1_kernel[grid](...)  # Phase 1
+    phase2_kernel[grid](...)  # Phase 2 (kernel launch barrier = sync)
 ```
-Process all phases for each timestep sequentially within the kernel. Vectorize the column dimension with `tl.arange(0, BLOCK_COL)`.
+Inside the kernel, recover coordinates from the flat index:
+```python
+flat_idx = tl.program_id(0) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+j = flat_idx % N_COLS + 1  # +1 to skip boundary
+i = flat_idx // N_COLS + 1
+mask = (i < N - 1) & (j < N - 1)  # boundary check
+```
+
+**Do NOT use `grid=(1,)`** for 2D stencils — at large N, a single CTA iterates over hundreds of tiles sequentially, wasting GPU parallelism. Two kernel launches per timestep (one per phase) is correct and fast.
+
+
+## Common Mistakes to AVOID
+
+1. **NEVER use Python for-loops to launch many small kernels.** If you have sequential dims `r, q` and parallel dim `p`, do NOT write `for r in range(NR): for q in range(NQ): kernel[grid](...)`. Instead, fuse them: `grid = (NR * NQ * cdiv(NP, BLOCK),)` and inside the kernel compute `r = pid // (NQ * NP_blocks)`, `q = (pid // NP_blocks) % NQ`, `p_start = (pid % NP_blocks) * BLOCK`.
+
+2. **NEVER write parallel kernels then call a serial fallback.** If you write tiled/vectorized phase kernels (e.g., `phase1_kernel`, `phase2_kernel`), the host function MUST call them. Do NOT add a serial `grid=(1,)` wrapper that ignores the parallel implementations.
+
+3. **Use `tl.dot()` for ALL matrix multiply and outer-product accumulations.** NEVER use scalar triple-nested loops (`for i: for j: for k: acc += a[i,k]*b[k,j]`) inside a Triton kernel. Tile with BLOCK_SIZE and use `acc += tl.dot(a_tile, b_tile)`.
+
+4. **For stencil kernels with `grid=(1,)` guidance: NEVER use multi-block grids.** If the analysis says `grid=(1,)`, do NOT use `grid=(triton.cdiv(N, BLOCK),)`. Multiple CTAs cannot synchronize between phases — CTA 0 may read stale values written by CTA 1. Use `BLOCK = triton.next_power_of_2(N)` so one CTA covers ALL elements.
 
 
 ## Array Information:
@@ -170,95 +192,105 @@ import triton
 import triton.language as tl
 
 @triton.jit
-def fdtd_2d_kernel(_fict_, ex, ey, hz, NX: tl.constexpr, NY: tl.constexpr, TMAX: tl.constexpr, BLOCK_SIZE: tl.constexpr):
-    # Define offsets once at the start
+def fdtd_2d_phase1_kernel(ey_ptr, hz_ptr, _fict_ptr, t, NX: tl.constexpr, NY: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    # Phase 1: Update ey boundary and interior
+    pid = tl.program_id(0)
+    block_start = pid * BLOCK_SIZE
     offsets = tl.arange(0, BLOCK_SIZE)
+    idx = block_start + offsets
     
-    # Time loop (sequential)
-    for t in range(TMAX):
-        # Phase 1: ey[0][j] = _fict_[t]
-        for j_start in range(0, NY, BLOCK_SIZE):
-            j_offsets = j_start + offsets
-            j_mask = j_offsets < NY
-            
-            # Load _fict_[t]
-            fict_val = tl.load(_fict_ + t)
-            
-            # Store to ey[0][j]
-            ey_ptr = ey + j_offsets  # ey[0][j] = 0 * NY + j
-            tl.store(ey_ptr, fict_val, mask=j_mask)
-        
-        # Phase 2: ey[i][j] = ey[i][j] - 0.5*(hz[i][j]-hz[i-1][j]) for i >= 1
-        for i in range(1, NX):
-            for j_start in range(0, NY, BLOCK_SIZE):
-                j_offsets = j_start + offsets
-                j_mask = j_offsets < NY
-                
-                # Linear indices
-                ey_indices = i * NY + j_offsets
-                hz_indices = i * NY + j_offsets
-                hz_prev_indices = (i - 1) * NY + j_offsets
-                
-                # Load values
-                ey_vals = tl.load(ey + ey_indices, mask=j_mask)
-                hz_vals = tl.load(hz + hz_indices, mask=j_mask)
-                hz_prev_vals = tl.load(hz + hz_prev_indices, mask=j_mask)
-                
-                # Compute and store
-                result = ey_vals - 0.5 * (hz_vals - hz_prev_vals)
-                tl.store(ey + ey_indices, result, mask=j_mask)
-        
-        # Phase 3: ex[i][j] = ex[i][j] - 0.5*(hz[i][j]-hz[i][j-1]) for j >= 1
-        for i in range(NX):
-            for j_start in range(1, NY, BLOCK_SIZE):
-                j_offsets = j_start + offsets
-                j_mask = j_offsets < NY
-                
-                # Linear indices
-                ex_indices = i * NY + j_offsets
-                hz_indices = i * NY + j_offsets
-                hz_prev_indices = i * NY + (j_offsets - 1)
-                
-                # Load values
-                ex_vals = tl.load(ex + ex_indices, mask=j_mask)
-                hz_vals = tl.load(hz + hz_indices, mask=j_mask)
-                hz_prev_vals = tl.load(hz + hz_prev_indices, mask=j_mask)
-                
-                # Compute and store
-                result = ex_vals - 0.5 * (hz_vals - hz_prev_vals)
-                tl.store(ex + ex_indices, result, mask=j_mask)
-        
-        # Phase 4: hz update for i < NX-1, j < NY-1
-        for i in range(NX - 1):
-            for j_start in range(0, NY - 1, BLOCK_SIZE):
-                j_offsets = j_start + offsets
-                j_mask = j_offsets < (NY - 1)
-                
-                # Linear indices for hz[i][j]
-                hz_indices = i * NY + j_offsets
-                
-                # Linear indices for ex[i][j+1] and ex[i][j]
-                ex_next_indices = i * NY + (j_offsets + 1)
-                ex_curr_indices = i * NY + j_offsets
-                
-                # Linear indices for ey[i+1][j] and ey[i][j]
-                ey_next_indices = (i + 1) * NY + j_offsets
-                ey_curr_indices = i * NY + j_offsets
-                
-                # Load values
-                hz_vals = tl.load(hz + hz_indices, mask=j_mask)
-                ex_next_vals = tl.load(ex + ex_next_indices, mask=j_mask)
-                ex_curr_vals = tl.load(ex + ex_curr_indices, mask=j_mask)
-                ey_next_vals = tl.load(ey + ey_next_indices, mask=j_mask)
-                ey_curr_vals = tl.load(ey + ey_curr_indices, mask=j_mask)
-                
-                # Compute and store
-                result = hz_vals - 0.7 * ((ex_next_vals - ex_curr_vals) + (ey_next_vals - ey_curr_vals))
-                tl.store(hz + hz_indices, result, mask=j_mask)
+    # First: Set ey[0][j] = _fict_[t] for all j
+    j = idx
+    mask_boundary = j < NY
+    fict_val = tl.load(_fict_ptr + t)
+    boundary_idx = j  # ey[0][j] = 0 * NY + j
+    tl.store(ey_ptr + boundary_idx, fict_val, mask=mask_boundary)
+    
+    # Second: Update ey[i][j] for i >= 1
+    total_interior = (NX - 1) * NY
+    interior_idx = idx
+    mask_interior = interior_idx < total_interior
+    
+    j_interior = interior_idx % NY
+    i_interior = interior_idx // NY + 1  # i starts from 1
+    
+    ey_offset = i_interior * NY + j_interior
+    hz_offset = i_interior * NY + j_interior
+    hz_prev_offset = (i_interior - 1) * NY + j_interior
+    
+    ey_val = tl.load(ey_ptr + ey_offset, mask=mask_interior)
+    hz_val = tl.load(hz_ptr + hz_offset, mask=mask_interior)
+    hz_prev_val = tl.load(hz_ptr + hz_prev_offset, mask=mask_interior)
+    
+    new_ey = ey_val - 0.5 * (hz_val - hz_prev_val)
+    tl.store(ey_ptr + ey_offset, new_ey, mask=mask_interior)
+
+@triton.jit
+def fdtd_2d_phase2_kernel(ex_ptr, hz_ptr, ey_ptr, NX: tl.constexpr, NY: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    # Phase 2: Update ex and hz
+    pid = tl.program_id(0)
+    block_start = pid * BLOCK_SIZE
+    offsets = tl.arange(0, BLOCK_SIZE)
+    idx = block_start + offsets
+    
+    # First: Update ex[i][j] for j >= 1
+    total_ex = NX * (NY - 1)
+    ex_idx = idx
+    mask_ex = ex_idx < total_ex
+    
+    j_ex = ex_idx % (NY - 1) + 1  # j starts from 1
+    i_ex = ex_idx // (NY - 1)
+    
+    ex_offset = i_ex * NY + j_ex
+    hz_offset = i_ex * NY + j_ex
+    hz_prev_offset = i_ex * NY + (j_ex - 1)
+    
+    ex_val = tl.load(ex_ptr + ex_offset, mask=mask_ex)
+    hz_val = tl.load(hz_ptr + hz_offset, mask=mask_ex)
+    hz_prev_val = tl.load(hz_ptr + hz_prev_offset, mask=mask_ex)
+    
+    new_ex = ex_val - 0.5 * (hz_val - hz_prev_val)
+    tl.store(ex_ptr + ex_offset, new_ex, mask=mask_ex)
+    
+    # Second: Update hz[i][j] for i < NX-1, j < NY-1
+    total_hz = (NX - 1) * (NY - 1)
+    hz_idx = idx
+    mask_hz = hz_idx < total_hz
+    
+    j_hz = hz_idx % (NY - 1)
+    i_hz = hz_idx // (NY - 1)
+    
+    hz_offset = i_hz * NY + j_hz
+    ex_offset = i_hz * NY + j_hz
+    ex_next_offset = i_hz * NY + (j_hz + 1)
+    ey_offset = i_hz * NY + j_hz
+    ey_next_offset = (i_hz + 1) * NY + j_hz
+    
+    hz_val = tl.load(hz_ptr + hz_offset, mask=mask_hz)
+    ex_val = tl.load(ex_ptr + ex_offset, mask=mask_hz)
+    ex_next_val = tl.load(ex_ptr + ex_next_offset, mask=mask_hz)
+    ey_val = tl.load(ey_ptr + ey_offset, mask=mask_hz)
+    ey_next_val = tl.load(ey_ptr + ey_next_offset, mask=mask_hz)
+    
+    new_hz = hz_val - 0.7 * ((ex_next_val - ex_val) + (ey_next_val - ey_val))
+    tl.store(hz_ptr + hz_offset, new_hz, mask=mask_hz)
 
 def fdtd_2d_triton(_fict_, ex, ey, hz, NX, NY, TMAX):
     BLOCK_SIZE = 128
     
-    # Single kernel launch with t loop inside
-    fdtd_2d_kernel[1,](_fict_, ex, ey, hz, NX, NY, TMAX, BLOCK_SIZE)
+    # Phase 1: max of boundary elements and interior ey elements
+    max_phase1 = max(NY, (NX - 1) * NY)
+    grid1 = (triton.cdiv(max_phase1, BLOCK_SIZE),)
+    
+    # Phase 2: max of ex elements and hz elements  
+    max_phase2 = max(NX * (NY - 1), (NX - 1) * (NY - 1))
+    grid2 = (triton.cdiv(max_phase2, BLOCK_SIZE),)
+    
+    for t in range(TMAX):
+        fdtd_2d_phase1_kernel[grid1](
+            ey, hz, _fict_, t, NX, NY, BLOCK_SIZE
+        )
+        fdtd_2d_phase2_kernel[grid2](
+            ex, hz, ey, NX, NY, BLOCK_SIZE
+        )
 ```

@@ -1,5 +1,5 @@
 # LLM-Generated Triton Implementation for adi (Polybench)
-# Generated: 2026-03-09 13:30:08
+# Generated: 2026-03-12 16:13:41
 # Model: claude-sonnet-4-20250514
 
 ================================================================================
@@ -139,6 +139,11 @@ Cloning is only needed if reads and writes to the same array happen **within a s
 
 **Loop variables** (outer to inner): t, i, j
 
+**Array `p`**: WAR carried by loop(s) `i, j`
+- Loop `t`: sequential context (not analyzed for WAR)
+- Parallelizing `i`: REQUIRES `p_copy = p.clone()`
+- Parallelizing `j`: REQUIRES `p_copy = p.clone()`
+
 **Array `v`**: WAR carried by loop(s) `j`
 - Loop `t`: sequential context (not analyzed for WAR)
 - Parallelizing `i`: SAFE (no copy needed for `v`)
@@ -154,11 +159,6 @@ Cloning is only needed if reads and writes to the same array happen **within a s
 - Parallelizing `i`: REQUIRES `u_copy = u.clone()`
 - Parallelizing `j`: REQUIRES `u_copy = u.clone()`
 
-**Array `p`**: WAR carried by loop(s) `i, j`
-- Loop `t`: sequential context (not analyzed for WAR)
-- Parallelizing `i`: REQUIRES `p_copy = p.clone()`
-- Parallelizing `j`: REQUIRES `p_copy = p.clone()`
-
 
 ## Parallelization Analysis
 
@@ -172,10 +172,55 @@ Cloning is only needed if reads and writes to the same array happen **within a s
 - Parallelize `j`, sequential `t`: INVALID
   - Dependencies carried along `j` (direction vectors indicate this dimension is NOT safe to parallelize)
 
+**CRITICAL: Grid = sequential dimensions ONLY. Vectorize `i` inside.**
+With 3 loop dimensions and only `i` parallelizable, encode ONLY the sequential dims (`t, j`) in the grid.
+
+**MANDATORY: Clone read-write arrays in the wrapper BEFORE launching the kernel:**
+```python
+def wrapper(p, q, u, v, ...):
+    p_copy = p.clone()  # Read from copy
+    q_copy = q.clone()  # Read from copy
+    u_copy = u.clone()  # Read from copy
+    v_copy = v.clone()  # Read from copy
+    BLOCK = triton.next_power_of_2(I)
+    grid = (T * J,)
+    kernel[grid](., ., ., ...)
+```
+The kernel receives BOTH the output array and the read-only copy:
+```python
+@triton.jit
+def kernel(p_out, p_in, ..., BLOCK: tl.constexpr):
+    pid = tl.program_id(0)
+    j = pid % J
+    t = pid // J
+    i_offsets = tl.arange(0, BLOCK)
+    mask = i_offsets < I
+    acc = tl.zeros([BLOCK], dtype=tl.float32)
+    for s in range(I):
+        val = tl.load(p_in + ...)  # scalar from READ-ONLY copy
+        vec = tl.load(...)  # vector[BLOCK] from weight matrix
+        acc += val * vec
+    tl.store(p_out + ..., acc, mask=mask)  # Write to ORIGINAL
+```
+This launches ONE kernel call, not nested Python for-loops. The clone ensures reads from `p_in` see the original values even as other programs write to `p_out`.
+
+**Temporary accumulators** (like `sum`): Do NOT allocate as a global tensor. Use a **register-local vector** (`tl.zeros`) inside each program instance. A global `sum` tensor shared across parallel programs causes **race conditions**.
+
 
 ## WAR + Parallelization Recommendation
 
-- Parallelize `i`: must clone `q`, `u`, `p` before parallel region
+- Parallelize `i`: must clone `p`, `q`, `u` before parallel region
+
+
+## Common Mistakes to AVOID
+
+1. **NEVER use Python for-loops to launch many small kernels.** If you have sequential dims `r, q` and parallel dim `p`, do NOT write `for r in range(NR): for q in range(NQ): kernel[grid](...)`. Instead, fuse them: `grid = (NR * NQ * cdiv(NP, BLOCK),)` and inside the kernel compute `r = pid // (NQ * NP_blocks)`, `q = (pid // NP_blocks) % NQ`, `p_start = (pid % NP_blocks) * BLOCK`.
+
+2. **NEVER write parallel kernels then call a serial fallback.** If you write tiled/vectorized phase kernels (e.g., `phase1_kernel`, `phase2_kernel`), the host function MUST call them. Do NOT add a serial `grid=(1,)` wrapper that ignores the parallel implementations.
+
+3. **Use `tl.dot()` for ALL matrix multiply and outer-product accumulations.** NEVER use scalar triple-nested loops (`for i: for j: for k: acc += a[i,k]*b[k,j]`) inside a Triton kernel. Tile with BLOCK_SIZE and use `acc += tl.dot(a_tile, b_tile)`.
+
+4. **For stencil kernels with `grid=(1,)` guidance: NEVER use multi-block grids.** If the analysis says `grid=(1,)`, do NOT use `grid=(triton.cdiv(N, BLOCK),)`. Multiple CTAs cannot synchronize between phases — CTA 0 may read stale values written by CTA 1. Use `BLOCK = triton.next_power_of_2(N)` so one CTA covers ALL elements.
 
 
 ## Array Information:
@@ -252,105 +297,14 @@ Provide ONLY the Python code, no additional explanation.
 RESPONSE:
 ================================================================================
 ```python
-import torch
 import triton
 import triton.language as tl
+import torch
 
 @triton.jit
-def adi_column_sweep_kernel(
-    u_ptr, v_ptr, p_ptr, q_ptr,
-    N: tl.constexpr,
-    a: tl.constexpr, b: tl.constexpr, c: tl.constexpr,
-    d: tl.constexpr, f: tl.constexpr,
-    BLOCK_SIZE: tl.constexpr
-):
-    pid = tl.program_id(0)
-    i = pid + 1
-    
-    if i >= N - 1:
-        return
-    
-    # Set boundary conditions
-    tl.store(v_ptr + 0 * N + i, 1.0)
-    tl.store(p_ptr + i * N + 0, 0.0)
-    v_0_i = tl.load(v_ptr + 0 * N + i)
-    tl.store(q_ptr + i * N + 0, v_0_i)
-    
-    # Forward sweep
-    for j in range(1, N - 1):
-        p_prev = tl.load(p_ptr + i * N + (j - 1))
-        q_prev = tl.load(q_ptr + i * N + (j - 1))
-        
-        u_j_im1 = tl.load(u_ptr + j * N + (i - 1))
-        u_j_i = tl.load(u_ptr + j * N + i)
-        u_j_ip1 = tl.load(u_ptr + j * N + (i + 1))
-        
-        p_val = -c / (a * p_prev + b)
-        q_val = (-d * u_j_im1 + (1.0 + 2.0 * d) * u_j_i - f * u_j_ip1 - a * q_prev) / (a * p_prev + b)
-        
-        tl.store(p_ptr + i * N + j, p_val)
-        tl.store(q_ptr + i * N + j, q_val)
-    
-    # Set boundary condition
-    tl.store(v_ptr + (N - 1) * N + i, 1.0)
-    
-    # Backward sweep
-    for j in range(N - 2, 0, -1):
-        p_val = tl.load(p_ptr + i * N + j)
-        q_val = tl.load(q_ptr + i * N + j)
-        v_next = tl.load(v_ptr + (j + 1) * N + i)
-        
-        v_val = p_val * v_next + q_val
-        tl.store(v_ptr + j * N + i, v_val)
-
-@triton.jit
-def adi_row_sweep_kernel(
-    u_ptr, v_ptr, p_ptr, q_ptr,
-    N: tl.constexpr,
-    a: tl.constexpr, c: tl.constexpr,
-    d: tl.constexpr, e: tl.constexpr, f: tl.constexpr,
-    BLOCK_SIZE: tl.constexpr
-):
-    pid = tl.program_id(0)
-    i = pid + 1
-    
-    if i >= N - 1:
-        return
-    
-    # Set boundary conditions
-    tl.store(u_ptr + i * N + 0, 1.0)
-    tl.store(p_ptr + i * N + 0, 0.0)
-    u_i_0 = tl.load(u_ptr + i * N + 0)
-    tl.store(q_ptr + i * N + 0, u_i_0)
-    
-    # Forward sweep
-    for j in range(1, N - 1):
-        p_prev = tl.load(p_ptr + i * N + (j - 1))
-        q_prev = tl.load(q_ptr + i * N + (j - 1))
-        
-        v_im1_j = tl.load(v_ptr + (i - 1) * N + j)
-        v_i_j = tl.load(v_ptr + i * N + j)
-        v_ip1_j = tl.load(v_ptr + (i + 1) * N + j)
-        
-        p_val = -f / (d * p_prev + e)
-        q_val = (-a * v_im1_j + (1.0 + 2.0 * a) * v_i_j - c * v_ip1_j - d * q_prev) / (d * p_prev + e)
-        
-        tl.store(p_ptr + i * N + j, p_val)
-        tl.store(q_ptr + i * N + j, q_val)
-    
-    # Set boundary condition
-    tl.store(u_ptr + i * N + (N - 1), 1.0)
-    
-    # Backward sweep
-    for j in range(N - 2, 0, -1):
-        p_val = tl.load(p_ptr + i * N + j)
-        q_val = tl.load(q_ptr + i * N + j)
-        u_next = tl.load(u_ptr + i * N + (j + 1))
-        
-        u_val = p_val * u_next + q_val
-        tl.store(u_ptr + i * N + j, u_val)
-
-def adi_triton(p, q, u, v, N, TSTEPS):
+def adi_kernel(p_ptr, q_ptr, u_ptr, v_ptr, p_copy_ptr, q_copy_ptr, u_copy_ptr, v_copy_ptr, 
+               N: tl.constexpr, TSTEPS: tl.constexpr, BLOCK_I: tl.constexpr):
+    # Constants
     DX = 1.0 / N
     DY = 1.0 / N
     DT = 1.0 / TSTEPS
@@ -366,20 +320,103 @@ def adi_triton(p, q, u, v, N, TSTEPS):
     e = 1.0 + mul2
     f = d
     
-    BLOCK_SIZE = 16
-    
+    # Time loop
     for t in range(1, TSTEPS + 1):
         # Column Sweep
-        grid = (N - 2,)
-        adi_column_sweep_kernel[grid](
-            u, v, p, q,
-            N, a, b, c, d, f, BLOCK_SIZE
-        )
+        for i in range(1, N - 1):
+            # Set boundary conditions
+            tl.store(v_ptr + 0 * N + i, 1.0)
+            tl.store(p_ptr + i * N + 0, 0.0)
+            tl.store(q_ptr + i * N + 0, tl.load(v_copy_ptr + 0 * N + i))
+            
+            # Forward sweep
+            for j in range(1, N - 1):
+                p_prev = tl.load(p_copy_ptr + i * N + (j - 1))
+                q_prev = tl.load(q_copy_ptr + i * N + (j - 1))
+                
+                u_val1 = tl.load(u_copy_ptr + j * N + (i - 1))
+                u_val2 = tl.load(u_copy_ptr + j * N + i)
+                u_val3 = tl.load(u_copy_ptr + j * N + (i + 1))
+                
+                p_val = -c / (a * p_prev + b)
+                q_val = (-d * u_val1 + (1.0 + 2.0 * d) * u_val2 - f * u_val3 - a * q_prev) / (a * p_prev + b)
+                
+                tl.store(p_ptr + i * N + j, p_val)
+                tl.store(q_ptr + i * N + j, q_val)
+            
+            # Set boundary condition
+            tl.store(v_ptr + (N - 1) * N + i, 1.0)
+            
+            # Backward sweep
+            for j in range(N - 2, 0, -1):
+                p_val = tl.load(p_copy_ptr + i * N + j)
+                q_val = tl.load(q_copy_ptr + i * N + j)
+                v_next = tl.load(v_copy_ptr + (j + 1) * N + i)
+                
+                v_val = p_val * v_next + q_val
+                tl.store(v_ptr + j * N + i, v_val)
+        
+        # Update copies after column sweep
+        for idx in range(N * N):
+            tl.store(p_copy_ptr + idx, tl.load(p_ptr + idx))
+            tl.store(q_copy_ptr + idx, tl.load(q_ptr + idx))
+            tl.store(v_copy_ptr + idx, tl.load(v_ptr + idx))
         
         # Row Sweep
-        grid = (N - 2,)
-        adi_row_sweep_kernel[grid](
-            u, v, p, q,
-            N, a, c, d, e, f, BLOCK_SIZE
-        )
+        for i in range(1, N - 1):
+            # Set boundary conditions
+            tl.store(u_ptr + i * N + 0, 1.0)
+            tl.store(p_ptr + i * N + 0, 0.0)
+            tl.store(q_ptr + i * N + 0, tl.load(u_copy_ptr + i * N + 0))
+            
+            # Forward sweep
+            for j in range(1, N - 1):
+                p_prev = tl.load(p_copy_ptr + i * N + (j - 1))
+                q_prev = tl.load(q_copy_ptr + i * N + (j - 1))
+                
+                v_val1 = tl.load(v_copy_ptr + (i - 1) * N + j)
+                v_val2 = tl.load(v_copy_ptr + i * N + j)
+                v_val3 = tl.load(v_copy_ptr + (i + 1) * N + j)
+                
+                p_val = -f / (d * p_prev + e)
+                q_val = (-a * v_val1 + (1.0 + 2.0 * a) * v_val2 - c * v_val3 - d * q_prev) / (d * p_prev + e)
+                
+                tl.store(p_ptr + i * N + j, p_val)
+                tl.store(q_ptr + i * N + j, q_val)
+            
+            # Set boundary condition
+            tl.store(u_ptr + i * N + (N - 1), 1.0)
+            
+            # Backward sweep
+            for j in range(N - 2, 0, -1):
+                p_val = tl.load(p_copy_ptr + i * N + j)
+                q_val = tl.load(q_copy_ptr + i * N + j)
+                u_next = tl.load(u_copy_ptr + i * N + (j + 1))
+                
+                u_val = p_val * u_next + q_val
+                tl.store(u_ptr + i * N + j, u_val)
+        
+        # Update copies after row sweep
+        for idx in range(N * N):
+            tl.store(p_copy_ptr + idx, tl.load(p_ptr + idx))
+            tl.store(q_copy_ptr + idx, tl.load(q_ptr + idx))
+            tl.store(u_copy_ptr + idx, tl.load(u_ptr + idx))
+
+def adi_triton(p, q, u, v, N, TSTEPS):
+    # Clone arrays to handle WAR dependencies
+    p_copy = p.clone()
+    q_copy = q.clone()
+    u_copy = u.clone()
+    v_copy = v.clone()
+    
+    BLOCK_I = triton.next_power_of_2(N)
+    
+    # Single grid for sequential execution
+    grid = (1,)
+    
+    adi_kernel[grid](
+        p, q, u, v,
+        p_copy, q_copy, u_copy, v_copy,
+        N, TSTEPS, BLOCK_I
+    )
 ```

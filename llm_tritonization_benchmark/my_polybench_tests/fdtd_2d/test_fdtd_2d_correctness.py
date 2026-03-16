@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correctness test for fdtd_2d (Polybench) - attempt 1"""
+"""Correctness test for fdtd_2d (Polybench) - attempt 4"""
 import sys
 import ctypes
 import numpy as np
@@ -10,7 +10,7 @@ import torch
 
 # Import Triton implementation
 try:
-    from polybench_results_scale8x.llm_triton_no_analysis.fdtd_2d.attempt1 import fdtd_2d_triton
+    from polybench_results_scale8x.llm_triton.fdtd_2d.attempt4 import fdtd_2d_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

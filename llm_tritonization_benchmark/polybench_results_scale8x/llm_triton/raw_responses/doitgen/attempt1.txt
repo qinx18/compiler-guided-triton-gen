@@ -1,5 +1,5 @@
 # LLM-Generated Triton Implementation for doitgen (Polybench)
-# Generated: 2026-03-09 13:42:31
+# Generated: 2026-03-11 13:40:04
 # Model: claude-sonnet-4-20250514
 
 ================================================================================
@@ -56,6 +56,49 @@ for (r = 0; r < NR; r++)
 **Loop dimensions**: ['r', 'q', 'p', 's']
 
 - Parallelize `p`, sequential `r, q, s`: VALID
+
+**CRITICAL: Grid = sequential dimensions ONLY. Vectorize `p` inside.**
+With 4 loop dimensions and only `p` parallelizable, encode ONLY the sequential dims (`r, q, s`) in the grid.
+
+**MANDATORY: Clone read-write arrays in the wrapper BEFORE launching the kernel:**
+```python
+def wrapper(A, C4, sum, ...):
+    A_copy = A.clone()  # Read from copy
+    BLOCK = triton.next_power_of_2(P)
+    grid = (R * Q * S,)
+    kernel[grid](A, ,,  , A, _, c, o, p, y, ...)
+```
+The kernel receives BOTH the output array and the read-only copy:
+```python
+@triton.jit
+def kernel(A_out, A_in, ..., BLOCK: tl.constexpr):
+    pid = tl.program_id(0)
+    # decode r from pid
+    # decode q from pid
+    # decode s from pid
+    p_offsets = tl.arange(0, BLOCK)
+    mask = p_offsets < P
+    acc = tl.zeros([BLOCK], dtype=tl.float32)
+    for s in range(P):
+        val = tl.load(A_in + ...)  # scalar from READ-ONLY copy
+        vec = tl.load(...)  # vector[BLOCK] from weight matrix
+        acc += val * vec
+    tl.store(A_out + ..., acc, mask=mask)  # Write to ORIGINAL
+```
+This launches ONE kernel call, not nested Python for-loops. The clone ensures reads from `A_in` see the original values even as other programs write to `A_out`.
+
+**Temporary accumulators** (like `sum`): Do NOT allocate as a global tensor. Use a **register-local vector** (`tl.zeros`) inside each program instance. A global `sum` tensor shared across parallel programs causes **race conditions**.
+
+
+## Common Mistakes to AVOID
+
+1. **NEVER use Python for-loops to launch many small kernels.** If you have sequential dims `r, q` and parallel dim `p`, do NOT write `for r in range(NR): for q in range(NQ): kernel[grid](...)`. Instead, fuse them: `grid = (NR * NQ * cdiv(NP, BLOCK),)` and inside the kernel compute `r = pid // (NQ * NP_blocks)`, `q = (pid // NP_blocks) % NQ`, `p_start = (pid % NP_blocks) * BLOCK`.
+
+2. **NEVER write parallel kernels then call a serial fallback.** If you write tiled/vectorized phase kernels (e.g., `phase1_kernel`, `phase2_kernel`), the host function MUST call them. Do NOT add a serial `grid=(1,)` wrapper that ignores the parallel implementations.
+
+3. **Use `tl.dot()` for ALL matrix multiply and outer-product accumulations.** NEVER use scalar triple-nested loops (`for i: for j: for k: acc += a[i,k]*b[k,j]`) inside a Triton kernel. Tile with BLOCK_SIZE and use `acc += tl.dot(a_tile, b_tile)`.
+
+4. **For stencil kernels with `grid=(1,)` guidance: NEVER use multi-block grids.** If the analysis says `grid=(1,)`, do NOT use `grid=(triton.cdiv(N, BLOCK),)`. Multiple CTAs cannot synchronize between phases — CTA 0 may read stale values written by CTA 1. Use `BLOCK = triton.next_power_of_2(N)` so one CTA covers ALL elements.
 
 
 ## Array Information:
@@ -137,54 +180,43 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def doitgen_kernel(A, C4, sum_ptr, r, q, NP: tl.constexpr, BLOCK_P: tl.constexpr):
-    # Get program ID for p dimension
-    pid_p = tl.program_id(0)
+def doitgen_kernel(A_out, A_in, C4, NP: tl.constexpr, NQ: tl.constexpr, NR: tl.constexpr, BLOCK: tl.constexpr):
+    pid = tl.program_id(0)
     
-    # Calculate offsets for p dimension
-    p_offsets = pid_p * BLOCK_P + tl.arange(0, BLOCK_P)
+    # Decode r and q from pid
+    r = pid // NQ
+    q = pid % NQ
+    
+    # Vectorize over p dimension
+    p_offsets = tl.arange(0, BLOCK)
     p_mask = p_offsets < NP
     
-    # Initialize sum values to 0
-    sum_vals = tl.zeros([BLOCK_P], dtype=tl.float32)
+    # Initialize accumulator
+    acc = tl.zeros([BLOCK], dtype=tl.float32)
     
-    # Compute sum[p] = sum over s of A[r][q][s] * C4[s][p]
+    # Compute matrix-vector product: sum[p] = sum_s(A[r][q][s] * C4[s][p])
     for s in range(NP):
-        # Load A[r][q][s] - this is a scalar for all p values
-        a_idx = r * (NQ * NP) + q * NP + s
-        a_val = tl.load(A + a_idx)
+        # Load scalar A[r][q][s] from read-only copy
+        a_offset = r * (NQ * NP) + q * NP + s
+        a_val = tl.load(A_in + a_offset)
         
-        # Load C4[s][p] for current p block
+        # Load vector C4[s][p_offsets]
         c4_offsets = s * NP + p_offsets
-        c4_vals = tl.load(C4 + c4_offsets, mask=p_mask, other=0.0)
+        c4_vals = tl.load(C4 + c4_offsets, mask=p_mask)
         
-        # Accumulate sum
-        sum_vals += a_val * c4_vals
+        # Accumulate
+        acc += a_val * c4_vals
     
-    # Store sum values
-    sum_offsets = p_offsets
-    tl.store(sum_ptr + sum_offsets, sum_vals, mask=p_mask)
-    
-    # Store back to A[r][q][p]
-    a_offsets = r * (NQ * NP) + q * NP + p_offsets
-    tl.store(A + a_offsets, sum_vals, mask=p_mask)
+    # Store result back to A[r][q][p]
+    a_out_offsets = r * (NQ * NP) + q * NP + p_offsets
+    tl.store(A_out + a_out_offsets, acc, mask=p_mask)
 
 def doitgen_triton(A, C4, sum, NP, NQ, NR):
-    BLOCK_P = 32
+    # Clone A to ensure read-write consistency
+    A_copy = A.clone()
     
-    # Ensure tensors are contiguous
-    A = A.contiguous()
-    C4 = C4.contiguous()
-    sum = sum.contiguous()
+    BLOCK = triton.next_power_of_2(NP)
+    grid = (NR * NQ,)
     
-    # Launch kernel for each (r, q) pair
-    for r in range(NR):
-        for q in range(NQ):
-            grid = (triton.cdiv(NP, BLOCK_P),)
-            doitgen_kernel[grid](
-                A, C4, sum,
-                r, q,
-                NP=NP,
-                BLOCK_P=BLOCK_P
-            )
+    doitgen_kernel[grid](A, A_copy, C4, NP, NQ, NR, BLOCK)
 ```

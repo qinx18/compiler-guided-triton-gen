@@ -1,0 +1,291 @@
+
+## PREVIOUS ATTEMPT FAILED - NUMERICAL ERROR
+
+Your last attempt produced incorrect numerical results.
+
+**Error type**: Numerical error (values don't match)
+**Max error observed**: 4.828033e+01
+
+Please fix the numerical computation. Common causes:
+- Incorrect loop bounds or indices
+- Wrong array access patterns (row-major vs column-major)
+- Missing or incorrect operations
+- Off-by-one errors
+- Cloning input arrays instead of modifying them in-place (the test checks the original tensors)
+
+## LAST ATTEMPT (DO NOT REPEAT THE SAME MISTAKES):
+```python
+import triton
+import triton.language as tl
+
+@triton.jit
+def fdtd_2d_kernel(ey_ptr, ex_ptr, hz_ptr, _fict_ptr, t, NX: tl.constexpr, NY: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    block_start = pid * BLOCK_SIZE
+    offsets = tl.arange(0, BLOCK_SIZE)
+    idx = block_start + offsets
+    
+    # Phase 1: Set ey[0][j] = _fict_[t] for all j
+    j = idx
+    mask_boundary = j < NY
+    fict_val = tl.load(_fict_ptr + t)
+    boundary_idx = j
+    tl.store(ey_ptr + boundary_idx, fict_val, mask=mask_boundary)
+    
+    # Phase 2: Update ey[i][j] for i >= 1
+    total_interior = (NX - 1) * NY
+    interior_idx = idx
+    mask_interior = interior_idx < total_interior
+    
+    j_interior = interior_idx % NY
+    i_interior = interior_idx // NY + 1
+    
+    ey_offset = i_interior * NY + j_interior
+    hz_offset = i_interior * NY + j_interior
+    hz_prev_offset = (i_interior - 1) * NY + j_interior
+    
+    ey_val = tl.load(ey_ptr + ey_offset, mask=mask_interior)
+    hz_val = tl.load(hz_ptr + hz_offset, mask=mask_interior)
+    hz_prev_val = tl.load(hz_ptr + hz_prev_offset, mask=mask_interior)
+    
+    new_ey = ey_val - 0.5 * (hz_val - hz_prev_val)
+    tl.store(ey_ptr + ey_offset, new_ey, mask=mask_interior)
+    
+    # Phase 3: Update ex[i][j] for j >= 1
+    total_ex = NX * (NY - 1)
+    ex_idx = idx
+    mask_ex = ex_idx < total_ex
+    
+    j_ex = ex_idx % (NY - 1) + 1
+    i_ex = ex_idx // (NY - 1)
+    
+    ex_offset = i_ex * NY + j_ex
+    hz_offset = i_ex * NY + j_ex
+    hz_prev_offset = i_ex * NY + (j_ex - 1)
+    
+    ex_val = tl.load(ex_ptr + ex_offset, mask=mask_ex)
+    hz_val = tl.load(hz_ptr + hz_offset, mask=mask_ex)
+    hz_prev_val = tl.load(hz_ptr + hz_prev_offset, mask=mask_ex)
+    
+    new_ex = ex_val - 0.5 * (hz_val - hz_prev_val)
+    tl.store(ex_ptr + ex_offset, new_ex, mask=mask_ex)
+    
+    # Phase 4: Update hz[i][j] for i < NX-1, j < NY-1
+    total_hz = (NX - 1) * (NY - 1)
+    hz_idx = idx
+    mask_hz = hz_idx < total_hz
+    
+    j_hz = hz_idx % (NY - 1)
+    i_hz = hz_idx // (NY - 1)
+    
+    hz_offset = i_hz * NY + j_hz
+    ex_offset = i_hz * NY + j_hz
+    ex_next_offset = i_hz * NY + (j_hz + 1)
+    ey_offset = i_hz * NY + j_hz
+    ey_next_offset = (i_hz + 1) * NY + j_hz
+    
+    hz_val = tl.load(hz_ptr + hz_offset, mask=mask_hz)
+    ex_val = tl.load(ex_ptr + ex_offset, mask=mask_hz)
+    ex_next_val = tl.load(ex_ptr + ex_next_offset, mask=mask_hz)
+    ey_val = tl.load(ey_ptr + ey_offset, mask=mask_hz)
+    ey_next_val = tl.load(ey_ptr + ey_next_offset, mask=mask_hz)
+    
+    new_hz = hz_val - 0.7 * ((ex_next_val - ex_val) + (ey_next_val - ey_val))
+    tl.store(hz_ptr + hz_offset, new_hz, mask=mask_hz)
+
+def fdtd_2d_triton(_fict_, ex, ey, hz, NX, NY, TMAX):
+    BLOCK_SIZE = 128
+    
+    # Find the maximum number of elements across all phases
+    max_elements = max(NY, (NX - 1) * NY, NX * (NY - 1), (NX - 1) * (NY - 1))
+    grid = (triton.cdiv(max_elements, BLOCK_SIZE),)
+    
+    for t in range(TMAX):
+        fdtd_2d_kernel[grid](
+            ey, ex, hz, _fict_, t, NX, NY, BLOCK_SIZE
+        )
+```
+
+
+## ORIGINAL TASK:
+I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+#include <math.h>
+
+#define TMAX 20
+#define NX 60
+#define NY 80
+
+float _fict_[TMAX];
+float ex[NX][NY];
+float ey[NX][NY];
+float hz[NX][NY];
+
+void fdtd_2d_kernel() {
+  int t, i, j;
+#pragma scop
+  for(t = 0; t < TMAX; t++)
+    {
+      for (j = 0; j < NY; j++)
+	ey[0][j] = _fict_[t];
+      for (i = 1; i < NX; i++)
+	for (j = 0; j < NY; j++)
+	  ey[i][j] = ey[i][j] - 0.5*(hz[i][j]-hz[i-1][j]);
+      for (i = 0; i < NX; i++)
+	for (j = 1; j < NY; j++)
+	  ex[i][j] = ex[i][j] - 0.5*(hz[i][j]-hz[i][j-1]);
+      for (i = 0; i < NX - 1; i++)
+	for (j = 0; j < NY - 1; j++)
+	  hz[i][j] = hz[i][j] - 0.7*  (ex[i][j+1] - ex[i][j] +
+				       ey[i+1][j] - ey[i][j]);
+    }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+for(t = 0; t < TMAX; t++)
+    {
+      for (j = 0; j < NY; j++)
+	ey[0][j] = _fict_[t];
+      for (i = 1; i < NX; i++)
+	for (j = 0; j < NY; j++)
+	  ey[i][j] = ey[i][j] - 0.5*(hz[i][j]-hz[i-1][j]);
+      for (i = 0; i < NX; i++)
+	for (j = 1; j < NY; j++)
+	  ex[i][j] = ex[i][j] - 0.5*(hz[i][j]-hz[i][j-1]);
+      for (i = 0; i < NX - 1; i++)
+	for (j = 0; j < NY - 1; j++)
+	  hz[i][j] = hz[i][j] - 0.7*  (ex[i][j+1] - ex[i][j] +
+				       ey[i+1][j] - ey[i][j]);
+    }
+```
+
+## Parallelization Analysis
+
+**Loop dimensions**: ['t', 'j', 'i']
+
+- Parallelize `t`, sequential `j`: INVALID
+  - `t` is a sequential context loop (e.g. timestep) — must remain sequential
+
+- Parallelize `j`, sequential `t`: VALID
+
+- Parallelize `i`, sequential `t`: VALID
+
+**Both `j` and `i` are freely parallelizable.** Use a 2D grid to parallelize both simultaneously for best GPU occupancy.
+
+**CRITICAL: Timestep/phase structure**: The `t` loop must be in **Python host code**, NOT inside the Triton kernel.
+Do NOT put `for t in range(...)` inside the Triton kernel — there is no global synchronization between timesteps within a single kernel launch, which causes **race conditions** on shared arrays.
+
+**Use at most 2 kernels per timestep**. Fuse independent phases into a single kernel.
+
+**Parallelize ALL spatial dimensions**: Flatten all spatial dimensions into a single 1D index. Each CTA processes a block of elements from the flattened space, recovering multi-dim coordinates from the linear index.
+
+**Use BLOCK_SIZE = 128** (not larger) to maximize the number of CTAs and GPU occupancy.
+```python
+BLOCK_SIZE = 128
+total_elements = N_DIM0 * N_DIM1  # all spatial dims (add more if 3D+)
+grid = (triton.cdiv(total_elements, BLOCK_SIZE),)
+for t in range(TSTEPS):
+    phase1_kernel[grid](...)  # Phase 1
+    phase2_kernel[grid](...)  # Phase 2 (kernel launch barrier = sync)
+```
+Inside the kernel, recover coordinates from the flat index:
+```python
+flat_idx = tl.program_id(0) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+j = flat_idx % N_COLS + 1  # +1 to skip boundary
+i = flat_idx // N_COLS + 1
+mask = (i < N - 1) & (j < N - 1)  # boundary check
+```
+
+**Do NOT use `grid=(1,)`** for 2D stencils — at large N, a single CTA iterates over hundreds of tiles sequentially, wasting GPU parallelism. Two kernel launches per timestep (one per phase) is correct and fast.
+
+
+## Common Mistakes to AVOID
+
+1. **NEVER use Python for-loops to launch many small kernels.** If you have sequential dims `r, q` and parallel dim `p`, do NOT write `for r in range(NR): for q in range(NQ): kernel[grid](...)`. Instead, fuse them: `grid = (NR * NQ * cdiv(NP, BLOCK),)` and inside the kernel compute `r = pid // (NQ * NP_blocks)`, `q = (pid // NP_blocks) % NQ`, `p_start = (pid % NP_blocks) * BLOCK`.
+
+2. **NEVER write parallel kernels then call a serial fallback.** If you write tiled/vectorized phase kernels (e.g., `phase1_kernel`, `phase2_kernel`), the host function MUST call them. Do NOT add a serial `grid=(1,)` wrapper that ignores the parallel implementations.
+
+3. **Use `tl.dot()` for ALL matrix multiply and outer-product accumulations.** NEVER use scalar triple-nested loops (`for i: for j: for k: acc += a[i,k]*b[k,j]`) inside a Triton kernel. Tile with BLOCK_SIZE and use `acc += tl.dot(a_tile, b_tile)`.
+
+4. **For stencil kernels with `grid=(1,)` guidance: NEVER use multi-block grids.** If the analysis says `grid=(1,)`, do NOT use `grid=(triton.cdiv(N, BLOCK),)`. Multiple CTAs cannot synchronize between phases — CTA 0 may read stale values written by CTA 1. Use `BLOCK = triton.next_power_of_2(N)` so one CTA covers ALL elements.
+
+
+## Array Information:
+- `_fict_`: read-only
+- `ex`: read-write
+- `ey`: read-write
+- `hz`: read-write
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `NX` = 480
+- `NY` = 640
+- `TMAX` = 20
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `fdtd_2d_kernel`
+2. Includes a Python wrapper function named `fdtd_2d_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def fdtd_2d_triton(_fict_, ex, ey, hz, NX, NY, TMAX):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+This is attempt 3 of 10. Please provide a corrected implementation.
+Provide ONLY the Python code, no additional explanation.

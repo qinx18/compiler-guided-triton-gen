@@ -10,7 +10,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results_scale8x.llm_triton_no_analysis.covariance.attempt1 import covariance_triton
+    from polybench_results_scale8x.llm_triton.covariance.attempt6 import covariance_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

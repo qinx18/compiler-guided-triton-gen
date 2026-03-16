@@ -1,0 +1,351 @@
+# LLM-Generated Triton Implementation for gaussian (Real-World)
+# Generated: 2026-03-16 16:51:03
+# Model: claude-sonnet-4-20250514
+
+================================================================================
+PROMPT:
+================================================================================
+I have a real-world application kernel (from Rodinia benchmark suite) that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+/* Rodinia: Gaussian Elimination — Forward elimination with back substitution
+ *
+ * Solves Ax = b using Gaussian elimination without pivoting.
+ * The algorithm has a sequential outer loop (t = 0..N-1) with two
+ * parallelizable inner phases per iteration:
+ *
+ *   Phase 1 (Fan1): Compute multipliers for row t
+ *     m[i][t] = a[i][t] / a[t][t]   for i = t+1..N-1
+ *
+ *   Phase 2 (Fan2): Eliminate column t from rows below pivot
+ *     a[i][j] -= m[i][t] * a[t][j]  for i = t+1..N-1, j = t..N-1
+ *     b[i]    -= m[i][t] * b[t]     for i = t+1..N-1
+ *
+ * Key challenges:
+ *   - Sequential outer loop (t): each step depends on previous step's updates to a[]
+ *   - Phase 1 → Phase 2 dependency: m[] computed in Phase 1, consumed in Phase 2
+ *   - Triangular iteration space: inner loops shrink as t increases
+ *   - Division by pivot a[t][t] in Phase 1 — no pivoting, assumes non-singular
+ *   - WAR dependency: a[] is read in Phase 1 (a[i][t]) and written in Phase 2 (a[i][j])
+ *   - Back substitution is fully sequential
+ *
+ * From: gpu-rodinia/cuda/gaussian/gaussian.cu
+ */
+#include <math.h>
+
+#define N 512
+
+float a[N * N];    /* Coefficient matrix — modified in-place to upper triangular */
+float m[N * N];    /* Multiplier matrix — Phase 1 output, Phase 2 input */
+float b[N];        /* Right-hand side vector — modified during elimination */
+float x[N];        /* Solution vector — computed in back substitution */
+
+void gaussian_kernel() {
+    int t, i, j;
+
+#pragma scop
+    /* Forward elimination */
+    for (t = 0; t < N - 1; t++) {
+        /* Phase 1: Compute multipliers (Fan1)
+         * Each row i > t gets a multiplier m[i][t] = a[i][t] / a[t][t]
+         * This is parallelizable over i (no cross-row dependency).
+         */
+        for (i = t + 1; i < N; i++) {
+            m[i * N + t] = a[i * N + t] / a[t * N + t];
+        }
+
+        /* Phase 2: Eliminate column t (Fan2)
+         * For each row i > t, subtract m[i][t] * row_t from row_i.
+         * Parallelizable over (i, j) pairs.
+         * Also update b[i].
+         */
+        for (i = t + 1; i < N; i++) {
+            for (j = t; j < N; j++) {
+                a[i * N + j] -= m[i * N + t] * a[t * N + j];
+            }
+            b[i] -= m[i * N + t] * b[t];
+        }
+    }
+
+    /* Back substitution — fully sequential */
+    x[N - 1] = b[N - 1] / a[(N - 1) * N + (N - 1)];
+    for (i = N - 2; i >= 0; i--) {
+        float sum = b[i];
+        for (j = i + 1; j < N; j++) {
+            sum -= a[i * N + j] * x[j];
+        }
+        x[i] = sum / a[i * N + i];
+    }
+#pragma endscop
+}
+
+```
+
+## Kernel Loop to Implement:
+```c
+    /* Forward elimination */
+    for (t = 0; t < N - 1; t++) {
+        /* Phase 1: Compute multipliers (Fan1) */
+        for (i = t + 1; i < N; i++) {
+            m[i * N + t] = a[i * N + t] / a[t * N + t];
+        }
+
+        /* Phase 2: Eliminate column t (Fan2) */
+        for (i = t + 1; i < N; i++) {
+            for (j = t; j < N; j++) {
+                a[i * N + j] -= m[i * N + t] * a[t * N + j];
+            }
+            b[i] -= m[i * N + t] * b[t];
+        }
+    }
+
+    /* Back substitution */
+    x[N - 1] = b[N - 1] / a[(N - 1) * N + (N - 1)];
+    for (i = N - 2; i >= 0; i--) {
+        float sum = b[i];
+        for (j = i + 1; j < N; j++) {
+            sum -= a[i * N + j] * x[j];
+        }
+        x[i] = sum / a[i * N + i];
+    }
+```
+
+## WAR (Write-After-Read) Dependencies
+
+**Note**: This kernel has WAR (Write-After-Read) dependencies.
+
+**Arrays with WAR dependencies**: a
+
+The `t` loop is sequential (WAR on `a` + cross-phase deps). **Within each `t` step**, the kernel has distinct phases (e.g., compute values, then update using those values). The `i` dimension(s) CAN be parallelized within each phase.
+
+**Use a SINGLE kernel with the `t` loop INSIDE** and parallelize `i` using `grid=(cdiv(N, BLOCK_SIZE),)`. This avoids massive kernel launch overhead (N iterations × phases). Each CTA processes a block of `i` rows, vectorized with `tl.arange()`:
+```python
+@triton.jit
+def kernel(a_ptr, ..., N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    offsets = tl.arange(0, BLOCK_SIZE)
+    for t in range(N - 1):  # sequential t loop INSIDE kernel
+        i_vals = pid * BLOCK_SIZE + offsets + t + 1
+        mask = i_vals < N
+        if tl.sum(mask) > 0:  # CRITICAL: skip when no valid rows for this CTA
+            # Phase 1: vectorized over i
+            ...
+            # Phase 2: vectorized over i
+            ...
+BLOCK_SIZE = 64  # Use small block for more CTAs in triangular iteration
+grid = (triton.cdiv(N, BLOCK_SIZE),)  # parallelize i via grid
+kernel[grid](a, ..., N=N, BLOCK_SIZE=BLOCK_SIZE)
+```
+**Use BLOCK_SIZE=64** (not 256) — triangular iteration spaces shrink as `t` increases, so more CTAs means earlier skip via the mask guard.
+
+**Back substitution** (if the kernel has one) is fully sequential. Do it **inside the same kernel** using only CTA 0:
+```python
+if tl.program_id(0) == 0:
+    # Back-sub: scalar sequential loop
+    for i in range(N - 2, -1, -1):
+        sum_val = tl.load(b_ptr + i)
+        for j in range(i + 1, N):
+            sum_val -= tl.load(a_ptr + i * N + j) * tl.load(x_ptr + j)
+        tl.store(x_ptr + i, sum_val / tl.load(a_ptr + i * N + i))
+```
+**NEVER** launch separate kernels for each back-sub row — N kernel launches have more overhead than the sequential computation itself.
+
+
+## Multi-Phase Kernel — Single Kernel with Internal Loop
+
+**Both dimensions appear INVALID when analyzed together**, but that is because different phases share arrays across iterations of the `t` loop.
+
+**The `t` loop is sequential** (cross-phase deps). **Within each step**, the `i` dimension(s) CAN be parallelized.
+
+**Use a SINGLE kernel** with the `t` loop INSIDE. Parallelize `i` via `grid=(cdiv(N, BLOCK_SIZE),)`. This avoids massive launch overhead (N × phases kernel launches). Each CTA processes a block of `i` values using `tl.arange()` and masks.
+
+**If the kernel has a sequential part** (e.g., back substitution), include it in the SAME kernel using `if tl.program_id(0) == 0:` — do NOT launch separate kernels per row.
+
+
+## Array Information:
+- `a`: read-write
+- `b`: read-write
+- `m`: read-write
+- `x`: write-only
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+- `N` = 512
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `gaussian_kernel`
+2. Includes a Python wrapper function named `gaussian_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def gaussian_triton(a, b, m, x, N):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**Pass FIXED dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — N, M, BLOCK are constant across ALL kernel launches
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
+**NEVER use `tl.constexpr` for loop-varying parameters** (e.g., a timestep `t` that changes each Python iteration):
+```python
+# WRONG — causes N recompilations (one per t value)!
+def kernel(ptr, t: tl.constexpr, N: tl.constexpr):
+    ...
+for t in range(N):
+    kernel[(grid,)](ptr, t, N)  # recompiles for EACH t!
+
+# CORRECT — t is a regular parameter, no recompilation
+def kernel(ptr, t, N: tl.constexpr):
+    ...
+for t in range(N):
+    kernel[(grid,)](ptr, t, N)  # same compiled kernel, different t
+```
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**NEVER use `mask.any()` — Triton tensors don't have `.any()`.** Use `tl.sum(mask) > 0` instead:
+```python
+# WRONG
+if mask.any():  # AttributeError!
+
+# CORRECT
+if tl.sum(mask) > 0:
+```
+
+**Use `tl.sum(mask) > 0` to skip empty work in shrinking iteration spaces:**
+When a CTA has no valid elements (mask all-False), skip the inner loop entirely.
+Without this guard, CTAs waste time on useless masked loads/stores.
+
+**NEVER use scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use `break` or `continue` inside @triton.jit kernels** (unsupported AST). Use masks instead:
+```python
+# WRONG — break/continue cause "unsupported AST node type" error
+for ii in range(BLOCK_SIZE):
+    if condition: break  # ERROR!
+    if condition: continue  # ERROR!
+
+# CORRECT — use masks to skip invalid elements
+offsets = tl.arange(0, BLOCK_SIZE)
+mask = offsets < valid_count
+vals = tl.load(ptr + offsets, mask=mask)
+tl.store(out_ptr + offsets, vals, mask=mask)
+```
+**NEVER use Python lists inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation.
+
+================================================================================
+RESPONSE:
+================================================================================
+```python
+import triton
+import triton.language as tl
+
+@triton.jit
+def gaussian_kernel(a_ptr, b_ptr, m_ptr, x_ptr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(0)
+    offsets = tl.arange(0, BLOCK_SIZE)
+    
+    # Forward elimination
+    for t in range(N - 1):
+        # Phase 1: Compute multipliers (Fan1)
+        i_vals = pid * BLOCK_SIZE + offsets + t + 1
+        mask = i_vals < N
+        
+        if tl.sum(mask) > 0:
+            # Load pivot element
+            pivot = tl.load(a_ptr + t * N + t)
+            
+            # Load a[i][t] values for multiplier computation
+            a_indices = i_vals * N + t
+            a_vals = tl.load(a_ptr + a_indices, mask=mask)
+            
+            # Compute multipliers m[i][t] = a[i][t] / a[t][t]
+            multipliers = a_vals / pivot
+            
+            # Store multipliers
+            m_indices = i_vals * N + t
+            tl.store(m_ptr + m_indices, multipliers, mask=mask)
+            
+            # Phase 2: Eliminate column t (Fan2)
+            for j in range(t, N):
+                # Load a[t][j] (pivot row element)
+                pivot_row_val = tl.load(a_ptr + t * N + j)
+                
+                # Load a[i][j] values to be updated
+                a_ij_indices = i_vals * N + j
+                a_ij_vals = tl.load(a_ptr + a_ij_indices, mask=mask)
+                
+                # Update: a[i][j] -= m[i][t] * a[t][j]
+                updated_vals = a_ij_vals - multipliers * pivot_row_val
+                
+                # Store updated values
+                tl.store(a_ptr + a_ij_indices, updated_vals, mask=mask)
+            
+            # Update b[i] -= m[i][t] * b[t]
+            pivot_b_val = tl.load(b_ptr + t)
+            b_vals = tl.load(b_ptr + i_vals, mask=mask)
+            updated_b_vals = b_vals - multipliers * pivot_b_val
+            tl.store(b_ptr + i_vals, updated_b_vals, mask=mask)
+    
+    # Back substitution (only CTA 0)
+    if tl.program_id(0) == 0:
+        # x[N-1] = b[N-1] / a[N-1][N-1]
+        last_idx = N - 1
+        last_b = tl.load(b_ptr + last_idx)
+        last_a = tl.load(a_ptr + last_idx * N + last_idx)
+        tl.store(x_ptr + last_idx, last_b / last_a)
+        
+        # Back substitution loop
+        for i in range(N - 2, -1, -1):
+            sum_val = tl.load(b_ptr + i)
+            for j in range(i + 1, N):
+                a_ij = tl.load(a_ptr + i * N + j)
+                x_j = tl.load(x_ptr + j)
+                sum_val -= a_ij * x_j
+            diagonal_val = tl.load(a_ptr + i * N + i)
+            tl.store(x_ptr + i, sum_val / diagonal_val)
+
+def gaussian_triton(a, b, m, x, N):
+    BLOCK_SIZE = 64
+    grid = (triton.cdiv(N, BLOCK_SIZE),)
+    gaussian_kernel[grid](a, b, m, x, N=N, BLOCK_SIZE=BLOCK_SIZE)
+```

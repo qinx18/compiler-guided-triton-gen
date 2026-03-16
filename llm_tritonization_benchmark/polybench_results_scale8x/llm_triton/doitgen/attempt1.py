@@ -3,53 +3,42 @@ import triton.language as tl
 import torch
 
 @triton.jit
-def doitgen_kernel(A, C4, sum_ptr, r, q, NP: tl.constexpr, BLOCK_P: tl.constexpr):
-    # Get program ID for p dimension
-    pid_p = tl.program_id(0)
+def doitgen_kernel(A_out, A_in, C4, NP: tl.constexpr, NQ: tl.constexpr, NR: tl.constexpr, BLOCK: tl.constexpr):
+    pid = tl.program_id(0)
     
-    # Calculate offsets for p dimension
-    p_offsets = pid_p * BLOCK_P + tl.arange(0, BLOCK_P)
+    # Decode r and q from pid
+    r = pid // NQ
+    q = pid % NQ
+    
+    # Vectorize over p dimension
+    p_offsets = tl.arange(0, BLOCK)
     p_mask = p_offsets < NP
     
-    # Initialize sum values to 0
-    sum_vals = tl.zeros([BLOCK_P], dtype=tl.float32)
+    # Initialize accumulator
+    acc = tl.zeros([BLOCK], dtype=tl.float32)
     
-    # Compute sum[p] = sum over s of A[r][q][s] * C4[s][p]
+    # Compute matrix-vector product: sum[p] = sum_s(A[r][q][s] * C4[s][p])
     for s in range(NP):
-        # Load A[r][q][s] - this is a scalar for all p values
-        a_idx = r * (NQ * NP) + q * NP + s
-        a_val = tl.load(A + a_idx)
+        # Load scalar A[r][q][s] from read-only copy
+        a_offset = r * (NQ * NP) + q * NP + s
+        a_val = tl.load(A_in + a_offset)
         
-        # Load C4[s][p] for current p block
+        # Load vector C4[s][p_offsets]
         c4_offsets = s * NP + p_offsets
-        c4_vals = tl.load(C4 + c4_offsets, mask=p_mask, other=0.0)
+        c4_vals = tl.load(C4 + c4_offsets, mask=p_mask)
         
-        # Accumulate sum
-        sum_vals += a_val * c4_vals
+        # Accumulate
+        acc += a_val * c4_vals
     
-    # Store sum values
-    sum_offsets = p_offsets
-    tl.store(sum_ptr + sum_offsets, sum_vals, mask=p_mask)
-    
-    # Store back to A[r][q][p]
-    a_offsets = r * (NQ * NP) + q * NP + p_offsets
-    tl.store(A + a_offsets, sum_vals, mask=p_mask)
+    # Store result back to A[r][q][p]
+    a_out_offsets = r * (NQ * NP) + q * NP + p_offsets
+    tl.store(A_out + a_out_offsets, acc, mask=p_mask)
 
 def doitgen_triton(A, C4, sum, NP, NQ, NR):
-    BLOCK_P = 32
+    # Clone A to ensure read-write consistency
+    A_copy = A.clone()
     
-    # Ensure tensors are contiguous
-    A = A.contiguous()
-    C4 = C4.contiguous()
-    sum = sum.contiguous()
+    BLOCK = triton.next_power_of_2(NP)
+    grid = (NR * NQ,)
     
-    # Launch kernel for each (r, q) pair
-    for r in range(NR):
-        for q in range(NQ):
-            grid = (triton.cdiv(NP, BLOCK_P),)
-            doitgen_kernel[grid](
-                A, C4, sum,
-                r, q,
-                NP=NP,
-                BLOCK_P=BLOCK_P
-            )
+    doitgen_kernel[grid](A, A_copy, C4, NP, NQ, NR, BLOCK)

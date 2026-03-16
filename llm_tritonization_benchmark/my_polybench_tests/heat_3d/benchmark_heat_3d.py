@@ -10,7 +10,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 import torch
 
 try:
-    from polybench_results_scale8x.llm_triton_no_analysis.heat_3d.attempt6 import heat_3d_triton
+    from polybench_results_scale8x.llm_triton.heat_3d.attempt1 import heat_3d_triton
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
