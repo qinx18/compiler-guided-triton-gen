@@ -1,0 +1,99 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyperFirstAtBeginDocument{\AtBeginDocument}
+\HyperFirstAtBeginDocument{\ifx\hyper@anchor\@undefined
+\global\let\oldcontentsline\contentsline
+\gdef\contentsline#1#2#3#4{\oldcontentsline{#1}{#2}{#3}}
+\global\let\oldnewlabel\newlabel
+\gdef\newlabel#1#2{\newlabelxx{#1}#2}
+\gdef\newlabelxx#1#2#3#4#5#6{\oldnewlabel{#1}{{#2}{#3}}}
+\AtEndDocument{\ifx\hyper@anchor\@undefined
+\let\contentsline\oldcontentsline
+\let\newlabel\oldnewlabel
+\fi}
+\fi}
+\global\let\hyper@last\relax 
+\gdef\HyperFirstAtBeginDocument#1{#1}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{tillet2019triton}
+\citation{chen2024chatgpt,ouyang2024kernelbench}
+\citation{verdoolaege2012polyhedral}
+\citation{llvm}
+\@writefile{toc}{\contentsline {section}{Abstract}{1}{section*.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
+\newlabel{sec:intro}{{1}{1}{Introduction}{section.1}{}}
+\citation{verdoolaege2012polyhedral}
+\citation{anthropic2025claude}
+\citation{anthropic2025claude}
+\citation{polybench}
+\citation{callahan1988tsvc}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Our Approach}{2}{section.2}\protected@file@percent }
+\newlabel{sec:method}{{2}{2}{Our Approach}{section.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Loop Nest Extraction}{2}{subsection.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Static Analysis}{2}{subsection.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Prompt Construction}{2}{subsection.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Generation and Iterative Refinement}{2}{subsection.2.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}Evaluation Setup}{2}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4}Experimental Results}{2}{section.4}\protected@file@percent }
+\newlabel{sec:eval}{{4}{2}{Experimental Results}{section.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Polybench/C (30 Kernels)}{2}{subsection.4.1}\protected@file@percent }
+\citation{callahan1988tsvc}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces The \textsc  {TritonPilot}\xspace  workflow.\relax }}{3}{figure.caption.5}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{fig:pipeline}{{1}{3}{The \sysname workflow.\relax }{figure.caption.5}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Polybench/C results. WA = with analysis, NA = no analysis.\relax }}{3}{table.caption.6}\protected@file@percent }
+\newlabel{tab:results_1x}{{1}{3}{Polybench/C results. WA = with analysis, NA = no analysis.\relax }{table.caption.6}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Polybench scaling: 1$\times $ to 8$\times $ problem sizes ($N$: 60$\to $480, matrices: 120$\to $960). ``ST'' = single-threaded C; ``OMP'' = 80-thread OpenMP.\relax }}{3}{table.caption.8}\protected@file@percent }
+\newlabel{tab:results_8x}{{2}{3}{Polybench scaling: 1$\times $ to 8$\times $ problem sizes ($N$: 60$\to $480, matrices: 120$\to $960). ``ST'' = single-threaded C; ``OMP'' = 80-thread OpenMP.\relax }{table.caption.8}{}}
+\@writefile{toc}{\contentsline {paragraph}{Scaling.}{3}{table.caption.8}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Impact of analysis-triggered guidance categories. ``Before'' and ``After'' are speedups at 1$\times $ sizes except where noted.\relax }}{3}{table.caption.10}\protected@file@percent }
+\newlabel{tab:guidance_fixes}{{3}{3}{Impact of analysis-triggered guidance categories. ``Before'' and ``After'' are speedups at 1$\times $ sizes except where noted.\relax }{table.caption.10}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces TSVC results at three data sizes. ``ST'' = single-threaded C (\texttt  {-O2}), ``OMP'' = OpenMP C (\texttt  {-O2 -fopenmp}, 80\nonbreakingspace threads). Pass rate: 150/151 (99.3\%).\relax }}{3}{table.caption.12}\protected@file@percent }
+\newlabel{tab:tsvc}{{4}{3}{TSVC results at three data sizes. ``ST'' = single-threaded C (\texttt {-O2}), ``OMP'' = OpenMP C (\texttt {-O2 -fopenmp}, 80~threads). Pass rate: 150/151 (99.3\%).\relax }{table.caption.12}{}}
+\@writefile{toc}{\contentsline {paragraph}{Guidance Impact.}{3}{table.caption.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Limitations.}{3}{section*.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}TSVC (151 Kernels)}{3}{subsection.4.2}\protected@file@percent }
+\newlabel{sec:tsvc}{{4.2}{3}{TSVC (151 Kernels)}{subsection.4.2}{}}
+\citation{che2009rodinia}
+\citation{heroux2009mantevo}
+\citation{chen2024chatgpt}
+\citation{ouyang2024kernelbench}
+\citation{bondhugula2008pluto}
+\citation{verdoolaege2013ppcg}
+\citation{chen2018tvm}
+\citation{ragan2013halide}
+\bibstyle{ACM-Reference-Format}
+\bibcite{tillet2019triton}{{1}{}{{}}{{}}}
+\bibcite{chen2024chatgpt}{{2}{}{{}}{{}}}
+\bibcite{ouyang2024kernelbench}{{3}{}{{}}{{}}}
+\bibcite{verdoolaege2012polyhedral}{{4}{}{{}}{{}}}
+\bibcite{llvm}{{5}{}{{}}{{}}}
+\bibcite{polybench}{{6}{}{{}}{{}}}
+\bibcite{anthropic2025claude}{{7}{}{{}}{{}}}
+\bibcite{verdoolaege2010isl}{{8}{}{{}}{{}}}
+\bibcite{chen2018tvm}{{9}{}{{}}{{}}}
+\bibcite{ragan2013halide}{{10}{}{{}}{{}}}
+\bibcite{bondhugula2008pluto}{{11}{}{{}}{{}}}
+\bibcite{verdoolaege2013ppcg}{{12}{}{{}}{{}}}
+\bibcite{che2009rodinia}{{13}{}{{}}{{}}}
+\bibcite{heroux2009mantevo}{{14}{}{{}}{{}}}
+\bibcite{callahan1988tsvc}{{15}{}{{}}{{}}}
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Application kernel results (speedup vs.\ single-threaded C). ``---'' = NA failed all attempts.\relax }}{4}{table.caption.13}\protected@file@percent }
+\newlabel{tab:realworld}{{5}{4}{Application kernel results (speedup vs.\ single-threaded C). ``---'' = NA failed all attempts.\relax }{table.caption.13}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Application Kernels}{4}{subsection.4.3}\protected@file@percent }
+\newlabel{sec:realworld}{{4.3}{4}{Application Kernels}{subsection.4.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Related Work}{4}{section.5}\protected@file@percent }
+\newlabel{sec:related}{{5}{4}{Related Work}{section.5}{}}
+\@writefile{toc}{\contentsline {paragraph}{LLM Code Generation for GPUs.}{4}{section*.14}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Polyhedral Compilation and Auto-Scheduling.}{4}{section*.15}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Conclusion}{4}{section.6}\protected@file@percent }
+\newlabel{sec:conclusion}{{6}{4}{Conclusion}{section.6}{}}
+\@writefile{toc}{\contentsline {section}{References}{4}{section*.17}\protected@file@percent }
+\newlabel{tocindent-1}{0pt}
+\newlabel{tocindent0}{0pt}
+\newlabel{tocindent1}{4.62497pt}
+\newlabel{tocindent2}{11.81937pt}
+\newlabel{tocindent3}{0pt}
+\providecommand\NAT@force@numbers{}\NAT@force@numbers
+\newlabel{TotPages}{{5}{5}{}{page.5}{}}

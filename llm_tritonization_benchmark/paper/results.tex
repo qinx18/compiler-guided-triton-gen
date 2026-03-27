@@ -150,7 +150,8 @@ LLM produces code matching a production compiler.
 \label{sec:realworld}
 
 \begin{table}[t]
-  \caption{Application kernel results.  ``---'' = NA failed all attempts.}
+  \caption{Application kernel results (speedup vs.\ single-threaded C).
+    ``---'' = NA failed all attempts.}
   \label{tab:realworld}
   \centering\small
   \begin{tabular}{llcc}
@@ -177,19 +178,17 @@ multiply (SpMV) from miniFE and Lennard-Jones force computation from
 miniMD (Table~\ref{tab:realworld}).  All 8 pass correctness with
 analysis guidance (6 on the first attempt).
 
-SRAD (24.9$\times$) has three computational phases per iteration;
-the analysis detects cross-phase dependences and recommends splitting
-into separate kernels with parallel grids, yielding 7.1$\times$
-improvement over the NA baseline (3.5$\times$).
-The LJ force kernel from miniMD computes pairwise forces using a full
-neighbor list; the outer loop over atoms is embarrassingly parallel.
-With analysis guidance the LLM iterates only actual neighbors
-(25.8$\times$), while the NA version wastes cycles on padded entries
-(23.0$\times$).
+The primary evaluation here is \emph{WA vs.\ NA}---whether analysis
+guidance improves LLM-generated GPU code.
+SRAD has three computational phases; analysis detects cross-phase
+dependences and recommends kernel splitting, yielding 7.1$\times$
+improvement over unguided code (WA~24.9$\times$ vs.\ NA~3.5$\times$).
 lavaMD improves from 0.56$\times$ (NA) to 1.47$\times$ (WA) as
-analysis identifies the parallelizable particle dimension, while the
-NA baseline fails with type-mismatch errors on 4 of 5 attempts.
-SpMV achieves 8.95$\times$ with analysis vs.\ 7.27$\times$ without,
-as guidance helps select better block sizes for the row-parallel pattern.
-For lud and hotspot, both versions produce near-identical Triton
-times; the speedup differences reflect C reference timing variance.
+analysis identifies the parallelizable dimension; the NA baseline
+fails on 4 of 5 attempts.
+For LJ~force, guidance promotes efficient neighbor-list traversal
+(WA~25.8$\times$ vs.\ NA~23.0$\times$).
+Note that these speedups are vs.\ single-threaded C and primarily
+demonstrate analysis impact on code quality, not absolute GPU
+advantage; the OMP~GPU comparison in \S\ref{sec:tsvc} provides
+the hardware-fair baseline.
