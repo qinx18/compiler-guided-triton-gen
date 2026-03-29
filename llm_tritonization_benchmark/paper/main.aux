@@ -44,14 +44,12 @@
 \newlabel{fig:pipeline}{{1}{3}{The \sysname workflow.\relax }{figure.caption.5}{}}
 \@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Polybench/C results. WA = with analysis, NA = no analysis.\relax }}{3}{table.caption.6}\protected@file@percent }
 \newlabel{tab:results_1x}{{1}{3}{Polybench/C results. WA = with analysis, NA = no analysis.\relax }{table.caption.6}{}}
+\@writefile{toc}{\contentsline {paragraph}{Scaling.}{3}{table.caption.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Guidance Impact.}{3}{table.caption.10}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Polybench scaling: 1$\times $ to 8$\times $ problem sizes ($N$: 60$\to $480, matrices: 120$\to $960). ``ST'' = single-threaded C; ``OMP'' = 80-thread OpenMP.\relax }}{3}{table.caption.8}\protected@file@percent }
 \newlabel{tab:results_8x}{{2}{3}{Polybench scaling: 1$\times $ to 8$\times $ problem sizes ($N$: 60$\to $480, matrices: 120$\to $960). ``ST'' = single-threaded C; ``OMP'' = 80-thread OpenMP.\relax }{table.caption.8}{}}
-\@writefile{toc}{\contentsline {paragraph}{Scaling.}{3}{table.caption.8}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Impact of analysis-triggered guidance categories. ``Before'' and ``After'' are speedups at 1$\times $ sizes except where noted.\relax }}{3}{table.caption.10}\protected@file@percent }
 \newlabel{tab:guidance_fixes}{{3}{3}{Impact of analysis-triggered guidance categories. ``Before'' and ``After'' are speedups at 1$\times $ sizes except where noted.\relax }{table.caption.10}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces TSVC results at three data sizes. ``ST'' = single-threaded C (\texttt  {-O2}), ``OMP'' = OpenMP C (\texttt  {-O2 -fopenmp}, 80\nonbreakingspace threads). Pass rate: 150/151 (99.3\%).\relax }}{3}{table.caption.12}\protected@file@percent }
-\newlabel{tab:tsvc}{{4}{3}{TSVC results at three data sizes. ``ST'' = single-threaded C (\texttt {-O2}), ``OMP'' = OpenMP C (\texttt {-O2 -fopenmp}, 80~threads). Pass rate: 150/151 (99.3\%).\relax }{table.caption.12}{}}
-\@writefile{toc}{\contentsline {paragraph}{Guidance Impact.}{3}{table.caption.10}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{Limitations.}{3}{section*.11}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {4.2}TSVC (151 Kernels)}{3}{subsection.4.2}\protected@file@percent }
 \newlabel{sec:tsvc}{{4.2}{3}{TSVC (151 Kernels)}{subsection.4.2}{}}
@@ -75,21 +73,25 @@
 \bibcite{chen2018tvm}{{9}{}{{}}{{}}}
 \bibcite{ragan2013halide}{{10}{}{{}}{{}}}
 \bibcite{bondhugula2008pluto}{{11}{}{{}}{{}}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces TSVC results at three data sizes. ``ST'' = single-threaded C (\texttt  {-O2}), ``OMP'' = OpenMP C (\texttt  {-O2 -fopenmp}, 80\nonbreakingspace threads). Pass rate: 150/151 (99.3\%).\relax }}{4}{table.caption.12}\protected@file@percent }
+\newlabel{tab:tsvc}{{4}{4}{TSVC results at three data sizes. ``ST'' = single-threaded C (\texttt {-O2}), ``OMP'' = OpenMP C (\texttt {-O2 -fopenmp}, 80~threads). Pass rate: 150/151 (99.3\%).\relax }{table.caption.12}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Application kernels: Triton (WA) vs.\ OMP\nonbreakingspace GPU offloading (\texttt  {nvc}) on the same GPU, and WA vs.\ NA ablation (vs.\ ST). ``---'' = failed.\relax }}{4}{table.caption.13}\protected@file@percent }
+\newlabel{tab:realworld}{{5}{4}{Application kernels: Triton (WA) vs.\ OMP~GPU offloading (\texttt {nvc}) on the same GPU, and WA vs.\ NA ablation (vs.\ ST). ``---'' = failed.\relax }{table.caption.13}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Application Kernels}{4}{subsection.4.3}\protected@file@percent }
+\newlabel{sec:realworld}{{4.3}{4}{Application Kernels}{subsection.4.3}{}}
+\@writefile{toc}{\contentsline {paragraph}{Triton vs.\ OMP GPU (same hardware).}{4}{section*.14}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{WA vs.\ NA (analysis impact).}{4}{section*.15}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}Related Work}{4}{section.5}\protected@file@percent }
+\newlabel{sec:related}{{5}{4}{Related Work}{section.5}{}}
+\@writefile{toc}{\contentsline {paragraph}{LLM Code Generation for GPUs.}{4}{section*.16}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Polyhedral Compilation and Auto-Scheduling.}{4}{section*.17}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Conclusion}{4}{section.6}\protected@file@percent }
+\newlabel{sec:conclusion}{{6}{4}{Conclusion}{section.6}{}}
+\@writefile{toc}{\contentsline {section}{References}{4}{section*.19}\protected@file@percent }
 \bibcite{verdoolaege2013ppcg}{{12}{}{{}}{{}}}
 \bibcite{che2009rodinia}{{13}{}{{}}{{}}}
 \bibcite{heroux2009mantevo}{{14}{}{{}}{{}}}
 \bibcite{callahan1988tsvc}{{15}{}{{}}{{}}}
-\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Application kernel results (speedup vs.\ single-threaded C). ``---'' = NA failed all attempts.\relax }}{4}{table.caption.13}\protected@file@percent }
-\newlabel{tab:realworld}{{5}{4}{Application kernel results (speedup vs.\ single-threaded C). ``---'' = NA failed all attempts.\relax }{table.caption.13}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Application Kernels}{4}{subsection.4.3}\protected@file@percent }
-\newlabel{sec:realworld}{{4.3}{4}{Application Kernels}{subsection.4.3}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {5}Related Work}{4}{section.5}\protected@file@percent }
-\newlabel{sec:related}{{5}{4}{Related Work}{section.5}{}}
-\@writefile{toc}{\contentsline {paragraph}{LLM Code Generation for GPUs.}{4}{section*.14}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Polyhedral Compilation and Auto-Scheduling.}{4}{section*.15}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {6}Conclusion}{4}{section.6}\protected@file@percent }
-\newlabel{sec:conclusion}{{6}{4}{Conclusion}{section.6}{}}
-\@writefile{toc}{\contentsline {section}{References}{4}{section*.17}\protected@file@percent }
 \newlabel{tocindent-1}{0pt}
 \newlabel{tocindent0}{0pt}
 \newlabel{tocindent1}{4.62497pt}

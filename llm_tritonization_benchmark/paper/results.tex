@@ -36,12 +36,7 @@ dominates.  Compute-bound kernels show strong speedups
 (\texttt{heat\_3d}: 12.36$\times$, \texttt{deriche}:
 7.44$\times$, \texttt{covariance}: 7.40$\times$).
 
-Of 6 apparent NA wins, 3 (\texttt{lu}, \texttt{ludcmp}, \texttt{bicg})
-contain confirmed race conditions---the NA code uses
-\texttt{grid=(N,)} for LU decomposition where row~$i$ reads from
-row~$k$ ($k<i$) that may not yet be computed by its CTA, producing up
-to $10^{33}$ variation across runs.  The remaining 3 NA wins reflect
-nondeterministic LLM code quality, not structural differences.
+In the head-to-head comparison (Table~\ref{tab:results_1x}), 6 of 28 common kernels appear faster without analysis guidance. However, 3 of these are \emph{false wins}: the unguided LLM parallelizes loop dimensions that carry data dependences, producing code that runs faster but computes incorrect results. For example, in \texttt{lu}, the NA code launches one GPU thread per row (\texttt{grid=(N,)}), but row~$i$ depends on the result of row~$k$ ($k<i$). Without sequential ordering, threads race to read unfinished rows, causing output differences up to $10^{33}$ across repeated runs. With analysis guidance, \sysname correctly identifies this dependence and enforces sequential row processing, sacrificing parallelism for correctness. The remaining 3 NA wins are within measurement noise and reflect nondeterministic LLM code quality rather than a systematic advantage of unguided generation.
 
 \paragraph{Scaling.}
 
@@ -150,45 +145,46 @@ LLM produces code matching a production compiler.
 \label{sec:realworld}
 
 \begin{table}[t]
-  \caption{Application kernel results (speedup vs.\ single-threaded C).
-    ``---'' = NA failed all attempts.}
+  \caption{Application kernels: Triton (WA) vs.\ OMP~GPU offloading
+    (\texttt{nvc}) on the same GPU, and WA vs.\ NA ablation (vs.\ ST).
+    ``---'' = failed.}
   \label{tab:realworld}
   \centering\small
-  \begin{tabular}{llcc}
+  \begin{tabular}{llccc}
     \toprule
-    \textbf{Source} & \textbf{Kernel} & \textbf{WA} & \textbf{NA} \\
+    \textbf{Source} & \textbf{Kernel} & \textbf{Tri/OMP\,GPU} & \textbf{WA/ST} & \textbf{NA/ST} \\
     \midrule
-    Rodinia & SRAD       & 24.86$\times$ & 3.50$\times$ \\
-    Rodinia & lud        & 13.18$\times$ & 15.52$\times$ \\
-    Rodinia & gaussian   & 3.35$\times$  & 3.61$\times$ \\
-    Rodinia & lavaMD     & 1.47$\times$  & 0.56$\times$ \\
-    Rodinia & hotspot    & 1.05$\times$  & 1.22$\times$ \\
-    Rodinia & pathfinder & 0.11$\times$  & --- \\
+    Rodinia & SRAD       & 24.9$\times$  & 24.9$\times$ & 3.5$\times$ \\
+    Rodinia & hotspot    & 4.3$\times$   & 1.1$\times$  & 1.2$\times$ \\
+    Rodinia & gaussian   & 249$\times$   & 3.4$\times$  & 3.6$\times$ \\
+    miniMD  & LJ force   & 6.8$\times$   & 25.8$\times$ & 23.0$\times$ \\
+    miniFE  & SpMV       & 3.1$\times$   & 9.0$\times$  & 7.3$\times$ \\
     \midrule
-    miniMD  & LJ force   & 25.82$\times$ & 23.00$\times$ \\
-    miniFE  & SpMV       & 8.95$\times$  & 7.27$\times$ \\
+    Rodinia & lud        & ---           & 13.2$\times$ & 15.5$\times$ \\
+    Rodinia & lavaMD     & ---           & 1.5$\times$  & 0.6$\times$ \\
+    Rodinia & pathfinder & ---           & 0.1$\times$  & --- \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-To evaluate generalization beyond synthetic benchmarks, we apply
-\sysname to 6 Rodinia kernels~\cite{che2009rodinia} and 2 ECP proxy
-application kernels~\cite{heroux2009mantevo}---CSR sparse matrix-vector
-multiply (SpMV) from miniFE and Lennard-Jones force computation from
-miniMD (Table~\ref{tab:realworld}).  All 8 pass correctness with
-analysis guidance (6 on the first attempt).
+To evaluate generalization, we apply \sysname to 6 Rodinia
+kernels~\cite{che2009rodinia} and 2 ECP proxy
+kernels~\cite{heroux2009mantevo} (Table~\ref{tab:realworld}).
+All 8 pass correctness with analysis guidance (6 on first attempt).
 
-The primary evaluation here is \emph{WA vs.\ NA}---whether analysis
-guidance improves LLM-generated GPU code.
-SRAD has three computational phases; analysis detects cross-phase
-dependences and recommends kernel splitting, yielding 7.1$\times$
-improvement over unguided code (WA~24.9$\times$ vs.\ NA~3.5$\times$).
-lavaMD improves from 0.56$\times$ (NA) to 1.47$\times$ (WA) as
-analysis identifies the parallelizable dimension; the NA baseline
-fails on 4 of 5 attempts.
-For LJ~force, guidance promotes efficient neighbor-list traversal
-(WA~25.8$\times$ vs.\ NA~23.0$\times$).
-Note that these speedups are vs.\ single-threaded C and primarily
-demonstrate analysis impact on code quality, not absolute GPU
-advantage; the OMP~GPU comparison in \S\ref{sec:tsvc} provides
-the hardware-fair baseline.
+\paragraph{Triton vs.\ OMP GPU (same hardware).}
+On 5 kernels with OMP~GPU baselines, LLM-generated Triton
+is 3--249$\times$ faster than \texttt{nvc}'s OpenMP offloading.
+The advantage comes from Triton's block-level model: the LLM
+fuses phases, uses shared memory tiling, and avoids
+per-timestep target-region launch overhead that penalizes
+\texttt{nvc} on iterative kernels (gaussian: 511 timesteps
+$\times$ 3~launches = 1533~offloads).  SRAD's multi-phase
+stencil benefits similarly (24.9$\times$).
+
+\paragraph{WA vs.\ NA (analysis impact).}
+Analysis guidance is most impactful on multi-phase kernels:
+SRAD improves from 3.5$\times$ (NA) to 24.9$\times$ (WA)
+via phase decomposition; lavaMD improves from 0.56$\times$ to
+1.47$\times$ as analysis identifies the parallelizable dimension
+(NA fails on 4/5 attempts).
