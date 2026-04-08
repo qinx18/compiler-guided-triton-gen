@@ -99,6 +99,8 @@ POLYBENCH_KERNELS_DIR = "/home/qinxiao/workspace/compiler-guided-triton-gen/anal
 MAX_ATTEMPTS = 10
 OUTPUT_DIR = "../results/polybench/polybench_results"
 ENABLE_ANALYSIS = True
+ENABLE_PROFILING_FEEDBACK = False  # When True, profile passing kernels with NCU and iterate
+MAX_PROFILING_ITERATIONS = 3  # Number of profiling-feedback optimization rounds
 SIZE_SCALE = 1  # Default: use original SMALL_DATASET sizes
 USE_OMP = False  # When True, compile C reference with OpenMP for multi-threaded baseline
 
@@ -1357,14 +1359,16 @@ def generate_correctness_test(kernel_name: str, func_spec: dict, attempt: int = 
 
     # For digit-starting names, use importlib
     llm_subdir = "llm_triton" if ENABLE_ANALYSIS else "llm_triton_no_analysis"
-    if kernel_name[0].isdigit():
-        import_block = (
-            f"import importlib\n"
-            f"    _mod = importlib.import_module(\"{OUTPUT_DIR}.{llm_subdir}.{kernel_name}.attempt{attempt}\")\n"
-            f"    {func_id}_triton = _mod.{func_id}_triton"
-        )
-    else:
-        import_block = f"from {OUTPUT_DIR}.{llm_subdir}.{kernel_name}.attempt{attempt} import {func_id}_triton"
+    # Resolve OUTPUT_DIR to absolute path for use in generated test scripts
+    output_dir_abs = str(Path(OUTPUT_DIR).resolve())
+    attempt_file_abs = str((Path(OUTPUT_DIR) / llm_subdir / kernel_name / f"attempt{attempt}.py").resolve())
+    import_block = (
+        f"import importlib.util\n"
+        f"    _spec = importlib.util.spec_from_file_location('_kmod', '{attempt_file_abs}')\n"
+        f"    _mod = importlib.util.module_from_spec(_spec)\n"
+        f"    _spec.loader.exec_module(_mod)\n"
+        f"    {func_id}_triton = _mod.{func_id}_triton"
+    )
 
     omp_suffix = "_omp" if USE_OMP else ""
     c_lib_subdir = f"polybench_libs_scale{SIZE_SCALE}x{omp_suffix}" if SIZE_SCALE > 1 else f"polybench_libs{omp_suffix}"
@@ -1387,7 +1391,7 @@ except ImportError as e:
     sys.exit(1)
 
 # Load C reference
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "{c_lib_subdir}" / "lib{kernel_name}.so"
+C_LIB_PATH = Path("{str(Path('c_reference').resolve())}") / "{c_lib_subdir}" / "lib{kernel_name}.so"
 if not C_LIB_PATH.exists():
     print(f"C reference library not found: {{C_LIB_PATH}}")
     sys.exit(1)
@@ -1716,14 +1720,14 @@ def generate_benchmark_test(kernel_name: str, func_spec: dict, attempt: int = 1)
 
     # Import block
     llm_subdir = "llm_triton" if ENABLE_ANALYSIS else "llm_triton_no_analysis"
-    if kernel_name[0].isdigit():
-        import_block = (
-            f"import importlib\n"
-            f"    _mod = importlib.import_module(\"{OUTPUT_DIR}.{llm_subdir}.{kernel_name}.attempt{attempt}\")\n"
-            f"    {func_id}_triton = _mod.{func_id}_triton"
-        )
-    else:
-        import_block = f"from {OUTPUT_DIR}.{llm_subdir}.{kernel_name}.attempt{attempt} import {func_id}_triton"
+    attempt_file_abs = str((Path(OUTPUT_DIR) / llm_subdir / kernel_name / f"attempt{attempt}.py").resolve())
+    import_block = (
+        f"import importlib.util\n"
+        f"    _spec = importlib.util.spec_from_file_location('_kmod', '{attempt_file_abs}')\n"
+        f"    _mod = importlib.util.module_from_spec(_spec)\n"
+        f"    _spec.loader.exec_module(_mod)\n"
+        f"    {func_id}_triton = _mod.{func_id}_triton"
+    )
 
     omp_suffix = "_omp" if USE_OMP else ""
     c_lib_subdir = f"polybench_libs_scale{SIZE_SCALE}x{omp_suffix}" if SIZE_SCALE > 1 else f"polybench_libs{omp_suffix}"
@@ -1745,7 +1749,7 @@ except ImportError as e:
     print(f"Import error: {{e}}")
     sys.exit(1)
 
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "{c_lib_subdir}" / "lib{kernel_name}.so"
+C_LIB_PATH = Path("{str(Path('c_reference').resolve())}") / "{c_lib_subdir}" / "lib{kernel_name}.so"
 
 def run_c_reference({c_call_str}):
     lib = ctypes.CDLL(str(C_LIB_PATH))
@@ -2030,6 +2034,305 @@ Provide ONLY the Python code, no additional explanation."""
 
 
 # ============================================================================
+# NCU Profiling Feedback
+# ============================================================================
+
+NCU_PATH = "/usr/local/cuda-12.4/bin/ncu"
+NCU_METRICS = [
+    "sm__throughput.avg.pct_of_peak_sustained_elapsed",
+    "gpu__compute_memory_throughput.avg.pct_of_peak_sustained_elapsed",
+    "sm__warps_active.avg.pct_of_peak_sustained_active",
+    "gpu__time_duration.sum",
+    "l1tex__t_sectors_pipe_lsu_mem_global_op_ld_lookup_hit.sum",
+    "l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum",
+    "lts__t_sectors_op_read_lookup_hit.sum",
+    "lts__t_sectors_op_read.sum",
+]
+
+
+def _generate_ncu_script(kernel_name: str, code_path: str, func_spec: dict) -> str:
+    """Generate a standalone script that sets up tensors and runs the kernel for NCU profiling."""
+    arrays = func_spec['arrays']
+    scalar_params = func_spec.get('scalar_params', {})
+    params = get_kernel_params(kernel_name)
+
+    func_id = kernel_name
+    if func_id[0].isdigit():
+        func_id = "k" + func_id
+
+    # Build tensor initialization (same shapes as correctness test) — no indent, top-level script
+    array_inits = []
+    for arr_name, mode in sorted(arrays.items()):
+        if mode in ['r', 'rw', 'w', 'temp']:
+            shape = _get_array_shape(kernel_name, arr_name, params)
+            if shape:
+                shape_str = ", ".join(str(s) for s in shape)
+                array_inits.append(f"{arr_name} = torch.randn({shape_str}, device='cuda', dtype=torch.float32)")
+            else:
+                first_param = next(iter(params.values()), 100)
+                array_inits.append(f"{arr_name} = torch.randn({first_param}, device='cuda', dtype=torch.float32)")
+    array_init_str = "\n".join(array_inits)
+
+    # Build scalar params (values in DB may be type tags like 'scalar', use 1.5 as default)
+    scalar_inits = []
+    for sp_name, sp_val in scalar_params.items():
+        if isinstance(sp_val, (int, float)):
+            scalar_inits.append(f"{sp_name} = {sp_val}")
+        else:
+            scalar_inits.append(f"{sp_name} = 1.5")
+    scalar_init_str = "\n".join(scalar_inits)
+
+    # Build dim params
+    dim_inits = []
+    for p_name, p_val in params.items():
+        dim_inits.append(f"{p_name} = {p_val}")
+    dim_init_str = "\n".join(dim_inits)
+
+    # Build function call args (match the triton function signature)
+    all_names = sorted(arrays.keys()) + list(scalar_params.keys()) + list(params.keys())
+
+    code_path_abs = os.path.abspath(code_path)
+
+    script = f'''#!/usr/bin/env python3
+"""NCU profiling script for {kernel_name}"""
+import torch
+import sys
+import importlib.util
+
+# Import the Triton kernel
+_spec = importlib.util.spec_from_file_location("_kmod", "{code_path_abs}")
+_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+{func_id}_triton = _mod.{func_id}_triton
+
+# Initialize tensors and parameters
+{array_init_str}
+{scalar_init_str}
+{dim_init_str}
+
+# Build args by inspecting the function signature
+import inspect
+sig = inspect.signature({func_id}_triton)
+kwargs = {{}}
+local_vars = locals()
+for pname in sig.parameters:
+    pname_lower = pname.lower()
+    pname_upper = pname.upper()
+    if pname in local_vars:
+        kwargs[pname] = local_vars[pname]
+    elif pname_lower in local_vars:
+        kwargs[pname] = local_vars[pname_lower]
+    elif pname_upper in local_vars:
+        kwargs[pname] = local_vars[pname_upper]
+
+# Warmup
+for _ in range(2):
+    try:
+        {func_id}_triton(**kwargs)
+        torch.cuda.synchronize()
+    except Exception as e:
+        print(f"ERROR: {{e}}", file=sys.stderr)
+        sys.exit(1)
+
+# Profile run
+{func_id}_triton(**kwargs)
+torch.cuda.synchronize()
+'''
+    return script
+
+
+def run_ncu_profile(kernel_name: str, code_path: str, func_spec: dict) -> Optional[dict]:
+    """Run NCU on a passing kernel and return structured profiling metrics."""
+    import csv, io, tempfile
+
+    if not os.path.exists(NCU_PATH):
+        print(f"    NCU not found at {NCU_PATH}, skipping profiling")
+        return None
+
+    script = _generate_ncu_script(kernel_name, code_path, func_spec)
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, prefix=f'ncu_{kernel_name}_') as f:
+        f.write(script)
+        script_path = f.name
+
+    try:
+        cmd = [
+            NCU_PATH, "--target-processes", "all", "--csv",
+            "--metrics", ",".join(NCU_METRICS),
+            "--kernel-name", "regex:(?!distribution)(?!elementwise).*",
+            sys.executable, script_path
+        ]
+        env = {**os.environ, "TMPDIR": "/home/qinxiao/tmp"}
+        os.makedirs("/home/qinxiao/tmp", exist_ok=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
+
+        # Parse CSV output
+        metrics = {}
+        header = None
+        for line in proc.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            if '"ID"' in line:
+                header = line
+                continue
+            if header and line.startswith('"'):
+                try:
+                    reader = csv.reader(io.StringIO(line))
+                    values = next(reader)
+                    if len(values) >= 15:
+                        kname = values[4]
+                        metric_name = values[12]
+                        metric_value = values[14]
+                        # Only keep the main Triton kernel
+                        if "distribution" not in kname and "elementwise" not in kname:
+                            metrics[metric_name] = metric_value
+                except Exception:
+                    pass
+
+        if not metrics:
+            return None
+
+        def _parse_ncu_float(s):
+            """Parse NCU metric value, handling locale-formatted numbers like '29,490'."""
+            if not s:
+                return 0.0
+            # Remove commas used as thousands separators
+            return float(s.replace(",", ""))
+
+        # Compute derived metrics
+        sm_pct = metrics.get("sm__throughput.avg.pct_of_peak_sustained_elapsed", "0")
+        mem_pct = metrics.get("gpu__compute_memory_throughput.avg.pct_of_peak_sustained_elapsed", "0")
+        occ_pct = metrics.get("sm__warps_active.avg.pct_of_peak_sustained_active", "0")
+        duration = metrics.get("gpu__time_duration.sum", "0")
+
+        # L1 hit rate
+        l1_hits = _parse_ncu_float(metrics.get("l1tex__t_sectors_pipe_lsu_mem_global_op_ld_lookup_hit.sum", "0"))
+        l1_total = _parse_ncu_float(metrics.get("l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum", "0"))
+        l1_hit_rate = (l1_hits / l1_total * 100) if l1_total > 0 else 0
+
+        # L2 hit rate
+        l2_hits = _parse_ncu_float(metrics.get("lts__t_sectors_op_read_lookup_hit.sum", "0"))
+        l2_total = _parse_ncu_float(metrics.get("lts__t_sectors_op_read.sum", "0"))
+        l2_hit_rate = (l2_hits / l2_total * 100) if l2_total > 0 else 0
+
+        # Determine bottleneck
+        sm_val = _parse_ncu_float(sm_pct)
+        mem_val = _parse_ncu_float(mem_pct)
+        if sm_val > mem_val and sm_val > 40:
+            bottleneck = "compute-bound"
+        elif mem_val > sm_val and mem_val > 40:
+            bottleneck = "memory-bound"
+        elif sm_val < 20 and mem_val < 20:
+            bottleneck = "latency-bound (low utilization — likely insufficient parallelism or kernel launch overhead)"
+        else:
+            bottleneck = "balanced"
+
+        return {
+            "sm_throughput_pct": sm_pct,
+            "memory_throughput_pct": mem_pct,
+            "occupancy_pct": occ_pct,
+            "duration": duration,
+            "l1_hit_rate_pct": f"{l1_hit_rate:.1f}",
+            "l2_hit_rate_pct": f"{l2_hit_rate:.1f}",
+            "bottleneck": bottleneck,
+        }
+    except subprocess.TimeoutExpired:
+        print(f"    NCU profiling timed out")
+        return None
+    except Exception as e:
+        print(f"    NCU profiling error: {e}")
+        return None
+    finally:
+        os.unlink(script_path)
+
+
+def generate_triton_with_profiling_feedback(
+    kernel_name: str, original_prompt: str, last_code: str,
+    speedup: float, ncu_metrics: dict, iteration: int
+) -> Tuple[str, str]:
+    """Generate improved Triton code using NCU profiling feedback."""
+    profiling_section = f"""## PROFILING-GUIDED OPTIMIZATION (Iteration {iteration}/{MAX_PROFILING_ITERATIONS})
+
+Your current implementation is CORRECT and achieves {speedup:.2f}x speedup over single-threaded C.
+We want to improve its GPU performance based on hardware profiling data.
+
+### NCU Profiling Results:
+- **Bottleneck**: {ncu_metrics['bottleneck']}
+- **SM (compute) throughput**: {ncu_metrics['sm_throughput_pct']}% of peak
+- **Memory throughput**: {ncu_metrics['memory_throughput_pct']}% of peak
+- **Occupancy**: {ncu_metrics['occupancy_pct']}% (fraction of active warps)
+- **L1 cache hit rate**: {ncu_metrics['l1_hit_rate_pct']}%
+- **L2 cache hit rate**: {ncu_metrics['l2_hit_rate_pct']}%
+- **Kernel duration**: {ncu_metrics['duration']}
+
+### Optimization Guidance Based on Profiling:
+"""
+    bottleneck = ncu_metrics['bottleneck']
+    if "memory-bound" in bottleneck:
+        profiling_section += """- The kernel is **memory-bound**: memory throughput is the bottleneck.
+- Consider: shared memory tiling to reduce global memory accesses, improving data reuse,
+  coalescing memory accesses, reducing redundant loads, loop tiling.
+"""
+    elif "compute-bound" in bottleneck:
+        profiling_section += """- The kernel is **compute-bound**: arithmetic throughput is the bottleneck.
+- Consider: reducing redundant computation, using `tl.dot()` for matrix multiply patterns,
+  vectorizing operations, strength reduction.
+"""
+    elif "latency-bound" in bottleneck:
+        profiling_section += """- The kernel has **low utilization**: both compute and memory throughput are low.
+- This usually means insufficient parallelism or excessive synchronization.
+- Consider: increasing grid size, reducing sequential work per thread, increasing BLOCK_SIZE,
+  fusing multiple operations into one kernel to amortize launch overhead.
+"""
+    else:
+        profiling_section += """- The kernel is relatively balanced between compute and memory.
+- Consider: increasing occupancy (reduce registers/shared memory per block), better tiling,
+  overlapping computation with memory access.
+"""
+
+    if float(ncu_metrics['l1_hit_rate_pct']) < 30:
+        profiling_section += f"""- **Low L1 cache hit rate ({ncu_metrics['l1_hit_rate_pct']}%)**: poor data reuse.
+  Consider tiling or reordering accesses for better spatial/temporal locality.
+"""
+
+    if float(ncu_metrics['occupancy_pct']) < 30:
+        profiling_section += f"""- **Low occupancy ({ncu_metrics['occupancy_pct']}%)**: too few active warps.
+  Consider reducing per-thread register usage (smaller BLOCK_SIZE or simpler per-thread logic).
+"""
+
+    profiling_section += f"""
+### IMPORTANT:
+- The kernel MUST remain functionally correct — do not change the computation logic.
+- Focus on performance optimization only.
+- Keep the same function signature and interface.
+
+### Current Implementation:
+```python
+{last_code}
+```
+
+## ORIGINAL TASK:
+{original_prompt}
+
+Please provide an optimized version. Provide ONLY the Python code, no additional explanation."""
+
+    print(f"    Generating profiling-optimized code (iteration {iteration}/{MAX_PROFILING_ITERATIONS})...")
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=8192,
+        messages=[{"role": "user", "content": profiling_section}]
+    )
+
+    response_text = message.content[0].text
+    triton_code = response_text
+    if "```python" in triton_code:
+        triton_code = triton_code.split("```python")[1].split("```")[0].strip()
+    elif "```" in triton_code:
+        triton_code = triton_code.split("```")[1].split("```")[0].strip()
+
+    return triton_code, profiling_section
+
+
+# ============================================================================
 # Test execution
 # ============================================================================
 
@@ -2309,8 +2612,95 @@ def process_kernel(kernel_name: str, func_spec: dict) -> dict:
                     else:
                         results["benchmark"] = None
 
-                # Return immediately if speedup is good enough
+                # Profiling-feedback optimization loop
                 results["final_attempt"] = attempt
+                if ENABLE_PROFILING_FEEDBACK and results.get("benchmark") and client:
+                    current_speedup = results["benchmark"].get("speedup", 0) or 0
+                    current_code = triton_code
+                    current_attempt = attempt
+                    current_file = triton_file
+                    cached_ncu_metrics = None  # reuse when implementation didn't change
+
+                    for prof_iter in range(1, MAX_PROFILING_ITERATIONS + 1):
+                        print(f"\n  --- Profiling optimization iteration {prof_iter}/{MAX_PROFILING_ITERATIONS} ---")
+
+                        # Profile with NCU (skip if we already have metrics for this implementation)
+                        if cached_ncu_metrics is None:
+                            print(f"    Running NCU profiling on attempt {current_attempt}...")
+                            ncu_metrics = run_ncu_profile(kernel_name, str(current_file), func_spec)
+                            if not ncu_metrics:
+                                print(f"    NCU profiling failed, stopping optimization")
+                                break
+                        else:
+                            print(f"    Reusing cached NCU profile (implementation unchanged)")
+                            ncu_metrics = cached_ncu_metrics
+
+                        print(f"    Bottleneck: {ncu_metrics['bottleneck']}")
+                        print(f"    SM: {ncu_metrics['sm_throughput_pct']}%, Mem: {ncu_metrics['memory_throughput_pct']}%, "
+                              f"Occ: {ncu_metrics['occupancy_pct']}%, L1 hit: {ncu_metrics['l1_hit_rate_pct']}%")
+
+                        # Generate optimized code with profiling feedback
+                        opt_code, opt_prompt = generate_triton_with_profiling_feedback(
+                            kernel_name, original_prompt, current_code,
+                            current_speedup, ncu_metrics, prof_iter
+                        )
+
+                        # Save as a regular attempt file so existing test/benchmark
+                        # infrastructure works without path hacking
+                        opt_attempt_num = current_attempt + prof_iter
+                        opt_file = func_dir / f"attempt{opt_attempt_num}.py"
+                        opt_raw = raw_dir / f"attempt{opt_attempt_num}_profopt.txt"
+                        with open(opt_file, 'w') as f:
+                            f.write(opt_code)
+                        with open(opt_raw, 'w') as f:
+                            f.write(opt_prompt)
+
+                        # Re-test correctness using standard infrastructure
+                        test_code = generate_correctness_test(kernel_name, func_spec, opt_attempt_num)
+                        with open(test_file, 'w') as f:
+                            f.write(test_code)
+
+                        print(f"    Testing optimized kernel...")
+                        passed_opt, err_opt = run_test(kernel_name, test_file)
+
+                        if not passed_opt:
+                            print(f"    Optimized kernel FAILED correctness ({err_opt.get('type', 'unknown')}), keeping previous version")
+                            # Remove the failed attempt file to avoid confusion
+                            opt_file.unlink(missing_ok=True)
+                            # Implementation didn't change, reuse NCU metrics next iteration
+                            cached_ncu_metrics = ncu_metrics
+                            continue
+
+                        # Re-benchmark
+                        bench_code = generate_benchmark_test(kernel_name, func_spec, opt_attempt_num)
+                        bench_file = test_dir / f"benchmark_{kernel_name}.py"
+                        with open(bench_file, 'w') as f:
+                            f.write(bench_code)
+
+                        opt_bench = run_benchmark(kernel_name, bench_file)
+                        if opt_bench:
+                            new_speedup = opt_bench.get('speedup', 0) or 0
+                            print(f"    Optimized speedup: {new_speedup:.2f}x (was {current_speedup:.2f}x)")
+
+                            if new_speedup > current_speedup:
+                                print(f"    IMPROVEMENT: {current_speedup:.2f}x -> {new_speedup:.2f}x")
+                                current_speedup = new_speedup
+                                current_code = opt_code
+                                current_file = opt_file
+                                current_attempt = opt_attempt_num
+                                results["benchmark"] = opt_bench
+                                results["final_attempt"] = opt_attempt_num
+                                results["profiling_iterations"] = prof_iter
+                                results["profiling_improvement"] = True
+                                # New implementation — need fresh NCU profile next iteration
+                                cached_ncu_metrics = None
+                            else:
+                                print(f"    No improvement ({new_speedup:.2f}x <= {current_speedup:.2f}x), keeping previous")
+                                # Implementation didn't change, reuse NCU metrics
+                                cached_ncu_metrics = ncu_metrics
+                        else:
+                            print(f"    Optimized benchmark failed")
+
                 return results
             else:
                 print(f"  FAILED: {error_info.get('type', 'unknown')} - {error_info.get('message', '')[:100]}")
@@ -2420,12 +2810,25 @@ def benchmark_passed_kernels(kernel_names: list = None):
 
 def main():
     """Main Polybench pipeline."""
-    global ENABLE_ANALYSIS, SIZE_SCALE, OUTPUT_DIR, USE_OMP
+    global ENABLE_ANALYSIS, ENABLE_PROFILING_FEEDBACK, MAX_PROFILING_ITERATIONS, SIZE_SCALE, OUTPUT_DIR, USE_OMP
 
     # Check for --no-analysis flag
     if '--no-analysis' in sys.argv:
         sys.argv.remove('--no-analysis')
         ENABLE_ANALYSIS = False
+
+    # Check for --profile-feedback flag
+    if '--profile-feedback' in sys.argv:
+        sys.argv.remove('--profile-feedback')
+        ENABLE_PROFILING_FEEDBACK = True
+        print("Profiling feedback enabled: will use NCU to iteratively optimize passing kernels")
+
+    # Check for --profile-iterations flag
+    if '--profile-iterations' in sys.argv:
+        idx = sys.argv.index('--profile-iterations')
+        MAX_PROFILING_ITERATIONS = int(sys.argv[idx + 1])
+        sys.argv.pop(idx)
+        sys.argv.pop(idx)
 
     # Check for --omp flag (multi-threaded C reference)
     if '--omp' in sys.argv:
@@ -2455,9 +2858,10 @@ def main():
 
     analysis_mode = "WITH analysis" if ENABLE_ANALYSIS else "WITHOUT analysis (ablation)"
     scale_info = f" | Size scale: {SIZE_SCALE}x" if SIZE_SCALE > 1 else ""
+    profile_info = f" | Profiling feedback: {MAX_PROFILING_ITERATIONS} iterations" if ENABLE_PROFILING_FEEDBACK else ""
     print("=" * 70)
     print("Polybench/C Generation and Testing Pipeline")
-    print(f"Mode: {analysis_mode}{scale_info}")
+    print(f"Mode: {analysis_mode}{scale_info}{profile_info}")
     print(f"Total kernels available: {len(POLYBENCH_FUNCTIONS)}")
     print(f"Max attempts per kernel: {MAX_ATTEMPTS}")
     print("=" * 70)
