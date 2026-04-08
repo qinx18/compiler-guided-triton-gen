@@ -122,6 +122,35 @@ on the LLM's implicit knowledge of parallelism, we provide explicit
 compiler-derived constraints, achieving 100\% correctness on
 Polybench/C and 99\% on TSVC.
 
+\paragraph{LLM/Agent-Based Kernel Optimization.}
+Recent works improve kernel generation through more sophisticated methods.
+\emph{RL fine-tuning} approaches train LLMs with execution feedback:
+Dr.~Kernel~\cite{liu2026drkernel} uses profiling-based rewards to
+avoid reward hacking, achieving 31.6\% of kernels with $\geq$1.2$\times$
+speedup on KernelBench (beating Claude~Sonnet~4.5 and GPT-5);
+Tehrani et al.~\cite{tehrani2026ftgpt5} RL-fine-tune GPT-5, improving
+single-attempt correctness from 43.7\% to 77.0\%;
+DICE~\cite{bai2026dice} applies RL to \emph{diffusion} (non-autoregressive)
+LLMs, enabling holistic structural planning.
+\emph{Search-based} methods keep the LLM frozen:
+AVO~\cite{chen2026avo} replaces evolutionary operators with LLM agents,
+discovering attention kernels that outperform FlashAttention-4 by 10.5\%;
+K-Search~\cite{cao2026ksearch} decouples high-level strategy planning
+from code instantiation via a co-evolving world model, achieving up to
+14.3$\times$ on MoE kernels;
+OptiML~\cite{bhattacharjee2026optiml} uses MCTS with Nsight~Compute
+profiler feedback.
+KernelBlaster~\cite{dong2026kernelblaster} builds a persistent
+cross-task CUDA knowledge base for continual learning without fine-tuning.
+For non-GPU targets, AscendKernelGen~\cite{cao2026ascendkernelgen}
+and AscendCraft~\cite{wen2026ascendcraft} address Huawei Ascend NPU
+kernels through domain-specific datasets and intermediate DSLs.
+These works focus on \emph{how} to generate or optimize kernels
+(via RL, search, or memory); our work is orthogonal, addressing
+\emph{what} parallelism is safe through compiler analysis.
+The two directions are complementary: compiler-derived constraints
+could serve as reward signals or world-model priors in these frameworks.
+
 \paragraph{Polyhedral Compilation and Auto-Scheduling.}
 Polyhedral frameworks such as Pluto~\cite{bondhugula2008pluto} and
 PPCG~\cite{verdoolaege2013ppcg} automatically generate parallel code
@@ -230,6 +259,51 @@ M.~A.~Heroux, D.~W.~Doerfler, P.~S.~Crozier, et~al.
 D.~Callahan, J.~Dongarra, and D.~Levine.
 \newblock Vectorizing compilers: A test suite and results.
 \newblock In \emph{Proc. Supercomputing}, 1988.
+
+\bibitem{liu2026drkernel}
+W.~Liu, J.~Xu, Y.~Li, et~al.
+\newblock Dr.~Kernel: Reinforcement learning done right for {Triton} kernel generations.
+\newblock \emph{arXiv preprint arXiv:2602.05885}, 2026.
+
+\bibitem{tehrani2026ftgpt5}
+A.~Tehrani, Y.~Emara, E.~Wissam, et~al.
+\newblock Fine-tuning {GPT-5} for {GPU} kernel generation.
+\newblock \emph{arXiv preprint arXiv:2602.11000}, 2026.
+
+\bibitem{bai2026dice}
+H.~Bai, L.~Kong, X.~Chen, et~al.
+\newblock {DICE}: Diffusion large language models excel at generating {CUDA} kernels.
+\newblock \emph{arXiv preprint arXiv:2602.11715}, 2026.
+
+\bibitem{chen2026avo}
+T.~Chen, Z.~Ye, B.~Xu, et~al.
+\newblock {AVO}: Agentic variation operators for autonomous evolutionary search.
+\newblock \emph{arXiv preprint arXiv:2603.24517}, 2026.
+
+\bibitem{cao2026ksearch}
+S.~Cao, Z.~Mao, J.~E.~Gonzalez, and I.~Stoica.
+\newblock {K-Search}: {LLM} kernel generation via co-evolving intrinsic world model.
+\newblock \emph{arXiv preprint arXiv:2602.19128}, 2026.
+
+\bibitem{bhattacharjee2026optiml}
+A.~Bhattacharjee, H.~Ping, S.~V.~Le, et~al.
+\newblock {OptiML}: An end-to-end framework for program synthesis and {CUDA} kernel optimization.
+\newblock \emph{arXiv preprint arXiv:2602.12305}, 2026.
+
+\bibitem{dong2026kernelblaster}
+K.~S.~Dong, S.~Modi, D.~Nikiforov, et~al.
+\newblock {KernelBlaster}: Continual cross-task {CUDA} optimization via memory-augmented in-context reinforcement learning.
+\newblock \emph{arXiv preprint arXiv:2602.14293}, 2026.
+
+\bibitem{cao2026ascendkernelgen}
+X.~Cao, J.~Zhai, P.~Li, et~al.
+\newblock {AscendKernelGen}: A systematic study of {LLM}-based kernel generation for neural processing units.
+\newblock \emph{arXiv preprint arXiv:2601.07160}, 2026.
+
+\bibitem{wen2026ascendcraft}
+Z.~Wen, S.~Shao, Z.~Li, et~al.
+\newblock {AscendCraft}: Automatic {Ascend} {NPU} kernel generation via {DSL}-guided transcompilation.
+\newblock \emph{arXiv preprint arXiv:2601.22760}, 2026.
 
 \end{thebibliography}
 

@@ -122,9 +122,12 @@ kernel launch overhead at small $N$---at 8$\times$ sizes they reach
     \midrule
     Tri/ST median      & 67.1$\times$ & 73.2$\times$ \\
     Tri/OMP CPU median & 10.7$\times$ & 14.2$\times$ \\
-    Tri/OMP GPU median & 1.02$\times$ & ---           \\
+    Tri/OMP GPU median & 1.02$\times$ & ---$^\dagger$           \\
     \bottomrule
-    \multicolumn{3}{l}{\scriptsize $^*$Serial/2D kernels excluded at large sizes.}
+    \multicolumn{3}{l}{\scriptsize $^*$Of 150 passing kernels, only those with parallelizable}\\
+    \multicolumn{3}{l}{\scriptsize dimensions are benchmarked; serial and 2D kernels are}\\
+    \multicolumn{3}{l}{\scriptsize excluded because they exceed GPU memory at large sizes.}\\
+    \multicolumn{3}{l}{\scriptsize $^\dagger$\texttt{nvc -mp=gpu} does not support per-array sizes $>$32\,MB.}
   \end{tabular}
 \end{table}
 We apply \sysname to 151 TSVC~\cite{callahan1988tsvc} kernels
@@ -158,10 +161,12 @@ LLM produces code matching a production compiler.
     miniMD  & LJ force   & 6.8$\times$   & 25.8$\times$ & 23.0$\times$ \\
     miniFE  & SpMV       & 3.1$\times$   & 9.0$\times$  & 7.3$\times$ \\
     \midrule
-    Rodinia & lud        & ---           & 13.2$\times$ & 15.5$\times$ \\
-    Rodinia & lavaMD     & ---           & 1.5$\times$  & 0.6$\times$ \\
-    Rodinia & pathfinder & ---           & 0.1$\times$  & --- \\
+    Rodinia & lud        & ---$^a$       & 13.2$\times$ & 15.5$\times$ \\
+    Rodinia & lavaMD     & ---$^a$       & 1.5$\times$  & 0.6$\times$ \\
+    Rodinia & pathfinder & ---$^a$       & 0.1$\times$  & ---$^b$ \\
     \bottomrule
+    \multicolumn{5}{l}{\scriptsize $^a$OMP GPU offloading (\texttt{nvc}) fails to compile these kernels.}\\
+    \multicolumn{5}{l}{\scriptsize $^b$NA generates incorrect code (fails correctness check).}
   \end{tabular}
 \end{table}
 
