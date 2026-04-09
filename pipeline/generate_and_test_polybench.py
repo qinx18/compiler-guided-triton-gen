@@ -258,7 +258,143 @@ def get_kernel_params(kernel_name: str) -> dict:
 
 
 def build_polybench_prompt(kernel_name: str, func_spec: dict) -> str:
-    """Build the prompt for Polybench kernel Triton generation."""
+    """Build the prompt using unified kernel analysis module."""
+    from kernel_analysis import analyze_kernel, format_analysis_for_prompt
+
+    source = get_kernel_source(kernel_name)
+    if not source:
+        raise ValueError(f"Could not read kernel source for {kernel_name}")
+
+    params = get_kernel_params(kernel_name)
+    arrays = func_spec.get('arrays', {})
+    scalar_params = func_spec.get('scalar_params', {})
+    loop_code = func_spec.get('loop_code', '')
+    has_2d = func_spec.get('has_2d_arrays', False)
+
+    # Build array info section
+    array_lines = []
+    for arr_name, mode in sorted(arrays.items()):
+        mode_str = {'r': 'read-only', 'w': 'write-only', 'rw': 'read-write',
+                    'temp': 'temporary scratch (read-write, not checked for correctness)'}[mode]
+        array_lines.append(f"- `{arr_name}`: {mode_str}")
+    array_info = "\n".join(array_lines)
+
+    # Build dimension info
+    dim_lines = []
+    for param_name, param_value in sorted(params.items()):
+        dim_lines.append(f"- `{param_name}` = {param_value}")
+    dim_info = "\n".join(dim_lines)
+
+    # Build function signature
+    sig_parts = []
+    for arr_name in sorted(arrays.keys()):
+        sig_parts.append(arr_name)
+    for sp in sorted(scalar_params.keys()):
+        sig_parts.append(sp)
+    for p in sorted(params.keys()):
+        if p not in scalar_params:
+            sig_parts.append(p)
+    exact_sig = ", ".join(sig_parts)
+
+    func_id = kernel_name
+    if func_id[0].isdigit():
+        func_id = "k" + func_id
+
+    # --- Unified analysis ---
+    analysis_text = ""
+    if ENABLE_ANALYSIS:
+        analysis = analyze_kernel(kernel_name, source, arrays, params,
+                                  scalar_params, has_2d)
+        analysis_text = "\n" + format_analysis_for_prompt(analysis)
+
+    prompt = f"""I have a Polybench/C kernel that I want to implement in Triton for GPU acceleration.
+
+## Original C Code:
+```c
+{source}
+```
+
+## Kernel Loop to Implement:
+```c
+{loop_code}
+```
+{analysis_text}
+
+## Array Information:
+{array_info}
+
+## Dimension Parameters (compile-time constants in C, runtime parameters in Triton):
+{dim_info}
+
+## Requirements:
+Please generate a complete Triton implementation that:
+1. Includes a @triton.jit kernel function named `{func_id}_kernel`
+2. Includes a Python wrapper function named `{func_id}_triton`
+3. The wrapper accepts tensor arrays, scalar parameters, and dimension parameters
+4. Uses appropriate block sizes and memory access patterns
+5. Handles edge cases with masking
+6. Is functionally equivalent to the C code (same computation, same results)
+7. For 2D arrays, compute linear index as `row * stride + col`
+8. For 3D arrays, compute linear index as `dim0 * (dim1_size * dim2_size) + dim1 * dim2_size + dim2`
+
+## REQUIRED function signature (use EXACTLY these parameter names):
+```python
+def {func_id}_triton({exact_sig}):
+    ...  # kernel computation
+```
+
+## CRITICAL: Triton Compilation Rules
+
+**Pass dimension parameters as `tl.constexpr`** for best performance:
+```python
+# GOOD — enables compile-time unrolling and constant folding
+def kernel(ptr, N: tl.constexpr, M: tl.constexpr, BLOCK: tl.constexpr):
+    for i in range(N):  # compiler can unroll this
+        ...
+```
+
+**NEVER use `tl.arange()` inside a for loop:**
+```python
+# WRONG
+for block_start in range(0, n, BLOCK_SIZE):
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)  # ERROR!
+
+# CORRECT
+offsets = tl.arange(0, BLOCK_SIZE)  # Define once at start
+for block_start in range(0, n, BLOCK_SIZE):
+    current_offsets = block_start + offsets
+```
+
+**Prefer vectorized access over scalar indexing inside @triton.jit kernel:**
+```python
+# WRONG — scalar indexing into a Triton tensor
+for i in range(BLOCK_SIZE):
+    val = tensor[i]
+
+# CORRECT — vectorized load
+mask = offsets < n_elements
+vals = tl.load(ptr + offsets, mask=mask)
+```
+**Exception**: For variable-length inner reductions (e.g., neighbor traversal),
+scalar `for` loops with `tl.load`/`tl.store` on pointers are correct.
+Store results directly with `tl.store(ptr + idx, val)` — do NOT use
+`tl.where(arange == idx, val, vec)` which is O(BLOCK_SIZE) per element.
+
+**NEVER use non-existent Triton functions:**
+- Use Python operators: `a * b`, `a / b`, `a + b` (not `tl.mul`, `tl.div`, `tl.add`)
+- Use `triton.cdiv()` in wrapper only
+
+**NEVER use Python lists, break/continue inside @triton.jit kernels**
+**Pass tensors directly to kernels, NOT data_ptr()**
+**NEVER use chained comparisons (use separate comparisons with &)**
+
+Provide ONLY the Python code, no additional explanation."""
+
+    return prompt
+
+
+def build_polybench_prompt_legacy(kernel_name: str, func_spec: dict) -> str:
+    """Build the prompt for Polybench kernel Triton generation. (Legacy pattern-specific version)"""
     source = get_kernel_source(kernel_name)
     if not source:
         raise ValueError(f"Could not read kernel source for {kernel_name}")
