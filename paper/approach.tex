@@ -2,63 +2,22 @@
 \label{sec:method}
 \input{workflow}
 
-\sysname is implemented in approximately 14K lines of Python, using \pet/isl for polyhedral analysis and LLVM~17 for fallback dependence analysis.
-Figure~\ref{fig:pipeline} depicts the workflow of \sysname using \texttt{gemm} as a running example. Given the source program (i.e., a C source file in this work), \sysname automatically identifies optimisation candidates and translates them into the target language (i.e., Triton kernels in this work). The \sysname pipeline consists of six stages: loop nest extraction, static analysis, unified prompt construction, LLM-based generation, iterative refinement, and profiling-guided optimization.
+Figure~\ref{fig:pipeline} shows the \sysname workflow.
+Given a C source file, \sysname extracts loop nests, analyzes their parallelization properties, constructs a structured prompt, invokes an LLM to generate Triton code, and optionally refines performance using GPU profiling feedback.
 
-\subsection{Loop Nest Extraction}
-The current implementation of \sysname targets loop-level code translation. It leverages \pet's Static Control Part (SCoP) detection~\cite{verdoolaege2012polyhedral} to identify affine loop nests suitable for transformation. It scans each function and selects regions where loop bounds and memory accesses are affine in loop iterators and parameters, requiring no manual annotations.
-For example, for \texttt{gemm} in Figure~\ref{fig:pipeline}, \pet extracts a SCoP covering the full loop nest and produces a polyhedral representation including iteration domains, access relations, and loop schedules. This representation provides a precise and structured basis for subsequent dependence analysis.
+\subsection{Analysis and Prompt Construction}
+\sysname calls PET~\cite{verdoolaege2012polyhedral} once per kernel to extract a polyhedral representation (iteration domains, access relations, schedules). From this single invocation, it derives all parallelization constraints in a unified JSON schema:
+\emph{(i)}~for each loop dimension, whether it can be safely parallelized (by checking for cross-iteration dependences via ISL relation composition);
+\emph{(ii)}~WAR (write-after-read) dependences that require array cloning or sequential execution;
+\emph{(iii)}~reduction patterns (scalar accumulation + array read) mapped to Triton primitives;
+\emph{(iv)}~memory access patterns (stencil, triangular, cross-phase) that affect kernel structure.
+When polyhedral analysis fails (e.g., non-affine accesses), \sysname falls back to LLVM's \texttt{DependenceAnalysis}.
 
-\subsection{Static Analysis}
-\label{sec:analysis}
-\sysname performs dependence-driven analysis to derive constraints that govern correct parallelization and code generation. The analysis is organized as a set of independent modules that each examine one aspect of the kernel, producing results in a unified structured representation (a JSON schema with fixed fields regardless of what patterns the kernel exhibits). This design ensures that adding a new analysis module does not require modifying the prompt construction logic, improving extensibility and maintainability. The current implementation includes the following analyses:
-
-\paragraph{Parallelization Analysis.}
-For each loop dimension, \sysname determines whether it can be safely parallelized. This involves checking that no cross-iteration data dependences exist for that dimension. In \texttt{gemm}, both \texttt{i} and \texttt{j} are parallelizable since updates to \texttt{C[i][j]} do not introduce cross-iteration conflicts. Dimensions that carry dependences are marked as invalid with an explanation (e.g., ``Dependencies carried by loop \texttt{k}'').
-
-\paragraph{WAR Dependence Analysis.}
-Write-after-read (WAR) dependences are computed using exact polyhedral analysis to determine whether in-place updates are safe or require array cloning. When loop-level scoping information is available (via LLVM direction vectors), the analysis reports which loops carry the WAR, enabling finer-grained decisions. For \texttt{gemm}, no WAR dependences are present.
-
-\paragraph{Memory Access Pattern Detection.}
-\sysname identifies high-level memory access patterns that affect kernel structure:
-\emph{(i)}~\textbf{Stencil patterns}: neighboring-element reads of the same array, requiring synchronization barriers (\texttt{tl.debug\_barrier()}) between phases within a single CTA.
-\emph{(ii)}~\textbf{Triangular access}: loop bounds that depend on outer loop variables (e.g., \texttt{j < i}), suggesting one-program-per-row grid strategies.
-\emph{(iii)}~\textbf{Cross-phase dependencies}: multi-phase computations where one phase writes what another phase reads, requiring either separate kernel launches or explicit barriers.
-
-\paragraph{Reduction and Scalar Expansion.}
-Reduction patterns (e.g., sum, max) are detected and mapped to Triton primitives (\texttt{tl.sum()}, \texttt{tl.dot()}). Scalars that accumulate across parallel iterations are identified for expansion to per-thread registers, preventing shared-state race conditions.
-
-\paragraph{LLVM Fallback.}
-When polyhedral analysis is not applicable (e.g., due to non-affine accesses), \sysname falls back to LLVM's \texttt{DependenceAnalysis} to conservatively infer dependence-carrying loops. Direction vectors from LLVM are parsed and normalized to augment or replace polyhedral results.
-
-\subsection{Unified Prompt Construction}
-\label{sec:prompt}
-All analysis modules produce results in a common schema. A single prompt construction function (\texttt{format\_analysis\_for\_prompt}) renders the analysis into structured text that is pattern-agnostic: it emits whatever constraints the analysis found, without pattern-specific templates. This design principle---\emph{tell the LLM what is true about the kernel, rather than prescribing what to do}---improves scalability and reduces maintenance burden. The prompt includes:
-\begin{itemize}
-\item The original C source code and loop body to translate.
-\item Analysis results: valid/invalid parallelization dimensions with reasons, WAR dependence information, detected memory access patterns, and reduction types.
-\item The required Triton function signature and coding rules (e.g., vectorized access patterns, \texttt{tl.constexpr} usage).
-\end{itemize}
-The LLM receives the \emph{facts} (``dimension \texttt{j} is safe to parallelize; dimension \texttt{t} has cross-phase dependencies'') and decides the implementation strategy, rather than following a prescriptive code template.
+A single, pattern-agnostic function renders the analysis into structured text: it emits whatever constraints were found without pattern-specific templates. The prompt includes the C source, analysis facts (e.g., ``\texttt{j} is safe; \texttt{t} has cross-phase deps''), and Triton coding rules. The LLM receives facts and decides the implementation strategy.
 
 \subsection{Generation and Iterative Refinement}
-\label{sec:refinement}
-Given the constructed prompt, \sysname invokes the LLM (Claude Sonnet~4~\cite{anthropic2025claude} in this work) to generate the target code. The generated kernel is validated against the source program (compiled by LLVM in our case) using identical test inputs and FP32 tolerance checks. On validation failure, \sysname classifies the error into one of four categories:
-\emph{(i)}~compilation or runtime errors (syntax, missing imports, Triton JIT failures);
-\emph{(ii)}~numerical errors (incorrect results beyond tolerance);
-\emph{(iii)}~missing synchronization barriers (detected via pre-validation for known stencil patterns);
-\emph{(iv)}~low performance ($<$0.1$\times$ speedup, indicating insufficient parallelism).
-Each category triggers a targeted retry prompt with error-specific feedback. This process repeats for up to 10 attempts, with a context reset after the fifth attempt to mitigate error accumulation.
+\sysname invokes Claude Sonnet~4~\cite{anthropic2025claude} and validates the generated kernel against the C reference using identical inputs and FP32 tolerance checks. On failure, errors are classified (compilation, numerical, missing barriers, low parallelism) and a targeted retry prompt is issued, up to 10 attempts with a context reset at attempt~6.
 
 \subsection{Profiling-Guided Optimization}
 \label{sec:profiling}
-After a kernel passes correctness validation and benchmarking, \sysname optionally enters a profiling-guided optimization loop to improve performance. This stage uses NVIDIA Nsight Compute (NCU) to collect hardware utilization metrics from the generated kernel, then feeds them back to the LLM as optimization guidance.
-
-\paragraph{Profiling.}
-NCU profiles the kernel and reports: SM (compute) throughput as a percentage of peak, memory throughput as a percentage of peak, warp occupancy, L1/L2 cache hit rates, and kernel duration. From these metrics, \sysname classifies the bottleneck as \emph{compute-bound} (high SM utilization), \emph{memory-bound} (high memory throughput), or \emph{latency-bound} (both low, indicating insufficient parallelism or launch overhead).
-
-\paragraph{Feedback Loop.}
-The bottleneck classification, raw metrics, and the current kernel code are included in a new LLM prompt requesting an optimized version. The LLM-generated optimization is then re-validated for correctness and re-benchmarked. If the new version is both correct and faster, it replaces the current best; otherwise, the previous version is retained. This loop runs for up to $N$ iterations (3 in our experiments). To avoid redundant profiling, NCU results are cached and reused when the implementation does not change between iterations.
-
-\paragraph{Bottleneck-Specific Guidance.}
-The optimization prompt includes targeted advice based on the bottleneck type: memory-bound kernels are guided toward shared memory tiling and coalesced access; compute-bound kernels toward \texttt{tl.dot()} and vectorization; latency-bound kernels toward increased grid size and reduced sequential work. This structured feedback enables the LLM to make informed optimization decisions rather than guessing.
+After correctness validation, \sysname optionally profiles the kernel with NVIDIA Nsight Compute (NCU), collecting SM throughput, memory throughput, occupancy, and cache hit rates. It classifies the bottleneck (\emph{compute-bound}, \emph{memory-bound}, or \emph{latency-bound}) and feeds the metrics back to the LLM with bottleneck-specific optimization guidance. The optimized kernel is re-validated for correctness and kept only if faster. This loop runs up to 3 iterations, with NCU results cached when the implementation is unchanged.
