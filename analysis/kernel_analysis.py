@@ -566,7 +566,8 @@ def analyze_kernel(kernel_name: str, kernel_source: str, arrays: dict,
 
     # Find kernel file
     kernel_file = None
-    for subdir in ["kernels", "kernels_polybench", "kernels_realworld"]:
+    for subdir in ["kernels", "kernels_polybench", "kernels_realworld",
+                    "../results/rodinia/kernels_rodinia"]:
         candidate = ANALYSIS_DIR / subdir / f"{kernel_name}.c"
         if candidate.exists():
             kernel_file = str(candidate)
@@ -689,7 +690,8 @@ if __name__ == "__main__":
 
     kernel_name = sys.argv[1]
     kernel_file = None
-    for subdir in ["kernels", "kernels_polybench", "kernels_realworld"]:
+    for subdir in ["kernels", "kernels_polybench", "kernels_realworld",
+                    "../results/rodinia/kernels_rodinia"]:
         candidate = ANALYSIS_DIR / subdir / f"{kernel_name}.c"
         if candidate.exists():
             kernel_file = str(candidate)

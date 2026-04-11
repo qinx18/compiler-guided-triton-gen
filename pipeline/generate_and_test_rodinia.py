@@ -24,70 +24,10 @@ from typing import Optional, Tuple, Dict, List
 sys.path.append(str(Path(__file__).parent / "utilities"))
 from rodinia_functions_db import RODINIA_FUNCTIONS, RODINIA_KERNELS
 
-# Add PET analysis directory to path
+# Add analysis directory to path
 sys.path.insert(0, "/home/qinxiao/workspace/compiler-guided-triton-gen/analysis")
 
-# Import analysis modules
-try:
-    from compute_war_dependences import analyze_kernel_war
-    HAS_WAR_ANALYSIS = True
-except ImportError:
-    HAS_WAR_ANALYSIS = False
-    analyze_kernel_war = None
-
-try:
-    from compute_statement_overwrites import analyze_kernel_overwrites, format_overwrite_for_prompt
-    HAS_OVERWRITE_ANALYSIS = True
-except ImportError:
-    HAS_OVERWRITE_ANALYSIS = False
-
-try:
-    from compute_stream_compaction import analyze_kernel_stream_compaction
-    HAS_STREAM_ANALYSIS = True
-except ImportError:
-    HAS_STREAM_ANALYSIS = False
-
-try:
-    from compute_pointer_aliasing import analyze_kernel_aliasing, format_aliasing_for_prompt
-    HAS_ALIASING_ANALYSIS = True
-except ImportError:
-    HAS_ALIASING_ANALYSIS = False
-
-try:
-    from compute_parallel_dims import analyze_kernel_parallelization
-    HAS_PARDIMS_ANALYSIS = True
-except ImportError:
-    HAS_PARDIMS_ANALYSIS = False
-
-try:
-    from compute_scalar_expansion import analyze_kernel_scalar_expansion, format_scalar_expansion_for_prompt
-    HAS_SCALAR_EXPANSION = True
-except ImportError:
-    HAS_SCALAR_EXPANSION = False
-
-try:
-    from compute_reduction_type import analyze_kernel_reduction, build_reduction_instructions
-    HAS_REDUCTION = True
-except ImportError:
-    HAS_REDUCTION = False
-
-try:
-    from compute_gpu_parallelization_strategy import analyze_kernel_gpu_strategy, build_gpu_strategy_instructions
-    HAS_GPU_STRATEGY = True
-except ImportError:
-    HAS_GPU_STRATEGY = False
-
-# LLVM fallback adapters
-try:
-    from llvm_fallback_adapters import (
-        llvm_war_fallback, llvm_overwrite_fallback,
-        llvm_stream_compaction_fallback, llvm_parallel_dims_fallback,
-        llvm_scalar_expansion_fallback, try_with_llvm_fallback,
-        enhance_war_with_llvm_vectors
-    )
-    HAS_LLVM_FALLBACK = True
-except ImportError:
-    HAS_LLVM_FALLBACK = False
+from kernel_analysis import analyze_kernel, format_analysis_for_prompt
 
 API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 client = anthropic.Anthropic(api_key=API_KEY) if API_KEY else None
@@ -127,88 +67,8 @@ def get_kernel_params(kernel_name: str) -> dict:
 # Analysis loading with LLVM fallback
 # ============================================================================
 
-def load_war_analysis(kernel_name: str) -> Optional[dict]:
-    """Load WAR analysis with LLVM fallback and direction vector enhancement."""
-    kernel_file = os.path.join(RODINIA_KERNELS_DIR, f"{kernel_name}.c")
-    if not os.path.exists(kernel_file):
-        return None
-
-    pet_result = None
-    if HAS_WAR_ANALYSIS and analyze_kernel_war:
-        try:
-            pet_result = analyze_kernel_war(kernel_file)
-        except Exception:
-            pass
-
-    # Enhance PET result with LLVM direction vectors for loop-level scoping
-    if pet_result and not pet_result.get('parallelization_safe', True) and HAS_LLVM_FALLBACK:
-        try:
-            enhanced = enhance_war_with_llvm_vectors(kernel_file, pet_result)
-            if enhanced:
-                return enhanced
-        except Exception:
-            pass
-
-    if pet_result is not None:
-        return pet_result
-
-    # Full LLVM fallback if PET failed entirely
-    if HAS_LLVM_FALLBACK:
-        try:
-            return llvm_war_fallback(kernel_file)
-        except Exception:
-            pass
-    return None
 
 
-def load_parallelization_analysis(kernel_name: str) -> Optional[dict]:
-    """Load parallelization analysis with LLVM fallback."""
-    kernel_file = os.path.join(RODINIA_KERNELS_DIR, f"{kernel_name}.c")
-    if HAS_PARDIMS_ANALYSIS and analyze_kernel_parallelization:
-        try:
-            result = analyze_kernel_parallelization(kernel_name, kernel_file=kernel_file)
-            if result is not None:
-                return result
-        except Exception:
-            pass
-
-    if HAS_LLVM_FALLBACK:
-        try:
-            return llvm_parallel_dims_fallback(kernel_file)
-        except Exception:
-            pass
-    return None
-
-
-def load_scalar_expansion_analysis(kernel_name: str) -> Optional[dict]:
-    """Load scalar expansion analysis with LLVM fallback."""
-    kernel_file = os.path.join(RODINIA_KERNELS_DIR, f"{kernel_name}.c")
-
-    if HAS_SCALAR_EXPANSION and analyze_kernel_scalar_expansion:
-        try:
-            result = analyze_kernel_scalar_expansion(kernel_file)
-            if result is not None:
-                return result
-        except Exception:
-            pass
-
-    if HAS_LLVM_FALLBACK:
-        try:
-            return llvm_scalar_expansion_fallback(kernel_file)
-        except Exception:
-            pass
-    return None
-
-
-def load_reduction_analysis(kernel_name: str) -> Optional[dict]:
-    """Load reduction analysis."""
-    if not HAS_REDUCTION or analyze_kernel_reduction is None:
-        return None
-    kernel_file = os.path.join(RODINIA_KERNELS_DIR, f"{kernel_name}.c")
-    try:
-        return analyze_kernel_reduction(kernel_name, kernel_file=kernel_file)
-    except Exception:
-        return None
 
 
 # ============================================================================
@@ -256,470 +116,12 @@ def build_rodinia_prompt(kernel_name: str, func_spec: dict) -> str:
     func_id = kernel_name
 
     # Load analysis results (skip if analysis disabled)
-    analysis_sections = []
-
+    analysis_text = ""
     if ENABLE_ANALYSIS:
-        war_result = load_war_analysis(kernel_name)
-        par_result = load_parallelization_analysis(kernel_name)
-        scalar_exp_result = load_scalar_expansion_analysis(kernel_name)
-        reduction_result = load_reduction_analysis(kernel_name)
+        analysis = analyze_kernel(kernel_name, source, arrays, params,
+                                  scalar_params, has_2d)
+        analysis_text = "\n" + format_analysis_for_prompt(analysis)
 
-        # Forward/backward substitution override
-        if (war_result and not war_result.get('parallelization_safe', True)
-                and par_result and par_result.get('is_triangular')
-                and par_result.get('options')):
-            tri = par_result.get('triangular_info', {})
-            smaller = tri.get('smaller', '')
-            larger = tri.get('larger', '')
-            copies = war_result.get('arrays_needing_copy', [])
-            deps = war_result.get('war_dependencies', [])
-            for dep in deps:
-                desc = dep.get('description', '')
-                for arr in copies:
-                    if (f'Read {arr}[({smaller})]' in desc
-                            and f'Write {arr}[({larger})]' in desc):
-                        for opt in par_result['options']:
-                            if opt['parallel_dim'] == larger and opt.get('valid'):
-                                opt['valid'] = False
-                                opt['issues'].append(
-                                    f"Forward substitution: `{arr}[{smaller}]` reads values "
-                                    f"from earlier `{larger}` iterations ({smaller} < {larger}). "
-                                    f"Parallelizing `{larger}` causes reads of stale values."
-                                )
-
-        if ENABLE_ANALYSIS and war_result and not war_result.get('parallelization_safe', True):
-            copies = war_result.get('arrays_needing_copy', [])
-            deps = war_result.get('war_dependencies', [])
-            loop_scoping = war_result.get('loop_level_scoping')
-
-            _sat_check = (
-                not loop_scoping
-                and len(copies) == 1
-                and par_result and par_result.get('is_triangular')
-                and par_result.get('options')
-            )
-            section = "\n## WAR (Write-After-Read) Dependencies\n\n"
-            if _sat_check:
-                section += "**Note**: This kernel has WAR (Write-After-Read) dependencies.\n"
-            else:
-                section += "**Note**: This kernel has WAR (Write-After-Read) dependencies.\n"
-                section += "If you split the computation into **separate Triton kernels** launched sequentially, "
-                section += "kernel launch barriers handle these dependencies naturally — no cloning needed.\n"
-                section += "Cloning is only needed if reads and writes to the same array happen **within a single kernel**.\n"
-                section += "\n**Minimize kernel launches**: Fuse compatible phases into a single kernel "
-                section += "when they operate on independent data within each thread. For example, "
-                section += "a forward sweep and backward sweep on the same row can share a kernel.\n"
-
-            if loop_scoping:
-                loop_vars = war_result.get('loop_vars', [])
-                section += f"\n**Loop variables** (outer to inner): {', '.join(loop_vars)}\n"
-                for arr in copies:
-                    scoping = loop_scoping.get(arr, {})
-                    carried = scoping.get('carried_by_loops', loop_vars)
-                    safe = scoping.get('safe_to_parallelize_loops', [])
-                    section += f"\n**Array `{arr}`**: WAR carried by loop(s) `{', '.join(carried)}`\n"
-                    seq_ctx = scoping.get('sequential_context_loops', [])
-                    for var in loop_vars:
-                        if var in safe:
-                            section += f"- Parallelizing `{var}`: SAFE (no copy needed for `{arr}`)\n"
-                        elif var in carried:
-                            section += f"- Parallelizing `{var}`: REQUIRES `{arr}_copy = {arr}.clone()`\n"
-                        elif var in seq_ctx:
-                            section += f"- Loop `{var}`: sequential context (not analyzed for WAR)\n"
-            else:
-                _is_single_arr_tri = (
-                    len(copies) == 1
-                    and par_result and par_result.get('is_triangular')
-                    and par_result.get('options')
-                )
-                _par_valid = [o for o in par_result['options'] if o.get('valid')] if par_result and par_result.get('options') else []
-                _par_invalid_cp = [o for o in par_result['options']
-                                   if not o.get('valid') and any('Cross-phase' in iss for iss in o.get('issues', []))
-                                   ] if par_result and par_result.get('options') else []
-                if _is_single_arr_tri and len(_par_valid) == 1 and _par_invalid_cp:
-                    seq_dim = _par_invalid_cp[0]['parallel_dim']
-                    par_dim = _par_valid[0]['parallel_dim']
-                    section += f"\n**Arrays with WAR dependencies**: {', '.join(copies)}\n"
-                    section += f"\nThe `{seq_dim}` loop is sequential (cross-phase deps). "
-                    section += f"The `{par_dim}` dimension can be parallelized within each `{seq_dim}` iteration. "
-                    section += "No cloning needed. Choose ONE strategy:\n"
-                    section += f"\n**Use `grid=(N,)` with one block per `{seq_dim}` row.** "
-                    section += f"Each block has `{seq_dim}=tl.program_id(0)` and "
-                    section += f"processes its row using scalar loops over `{par_dim}` and inner dims. "
-                    section += "This gives N CTAs for maximum GPU utilization.\n"
-                    section += "```python\n"
-                    section += f"grid = (N,)  # one CTA per row\n"
-                    section += f"kernel[grid]({copies[0]}, N)\n"
-                    section += f"# Inside kernel: {seq_dim} = tl.program_id(0)\n"
-                    section += "```\n"
-                elif _is_single_arr_tri and not _par_valid:
-                    section += f"\n**Arrays with WAR dependencies**: {', '.join(copies)}\n"
-                    section += "\nThis kernel is **inherently sequential** — no dimension can be safely "
-                    section += "parallelized. Use `grid=(1,)` with sequential loops. "
-                    section += "No cloning needed since execution is sequential.\n"
-                else:
-                    _has_valid_par = (
-                        par_result and par_result.get('options')
-                        and any(o.get('valid') for o in par_result['options'])
-                    )
-                    if copies:
-                        section += f"\n**Arrays with WAR dependencies**: {', '.join(copies)}\n"
-                    for dep in deps[:5]:
-                        section += f"- {dep.get('description', '')}\n"
-                    if not _has_valid_par:
-                        section += "\nThis kernel has **no safely parallelizable dimensions**. "
-                        section += "Use `grid=(1,)` with sequential loops inside the kernel. "
-                        section += "No cloning needed since execution is sequential within a single CTA.\n"
-                    else:
-                        if copies:
-                            section += "\n**If using a single kernel**: Create read-only copies before the parallel region:\n"
-                            section += "```python\n"
-                            for arr in copies:
-                                section += f"{arr}_copy = {arr}.clone()  # Read from copy, write to original\n"
-                            section += "```\n"
-                            section += "**If using separate kernels**: No cloning needed — launch one kernel per phase.\n"
-                        if par_result and par_result.get('options'):
-                            valid = [o for o in par_result['options'] if o.get('valid')]
-                            invalid = [o for o in par_result['options'] if not o.get('valid')]
-                            if len(valid) >= 2 and invalid:
-                                seq_dim = invalid[0]['parallel_dim']
-                                section += f"\n**Note**: Both spatial dimensions are safe to parallelize (see below). "
-                                section += f"When `{seq_dim}` is iterated sequentially in Python host code "
-                                section += "with separate kernel launches, cloning is likely unnecessary — "
-                                section += "each thread writes to a unique `(i,j)` location.\n"
-
-            analysis_sections.append(section)
-
-        if ENABLE_ANALYSIS and par_result and par_result.get('options'):
-            valid_opts = [o for o in par_result['options'] if o['valid']]
-            if valid_opts:
-                section = "\n## Parallelization Analysis\n\n"
-                section += f"**Loop dimensions**: {par_result.get('dims', [])}\n"
-                if par_result.get('is_triangular'):
-                    tri = par_result['triangular_info']
-                    section += f"**Triangular bounds**: {tri.get('smaller', '?')} < {tri.get('larger', '?')}\n"
-                for opt in par_result['options']:
-                    valid = "VALID" if opt['valid'] else "INVALID"
-                    section += f"\n- Parallelize `{opt['parallel_dim']}`, sequential `{opt['sequential_dim']}`: {valid}\n"
-                    for issue in opt.get('issues', []):
-                        section += f"  - {issue}\n"
-                _multi_dim_opt = (len(valid_opts) == 1
-                                  and ',' in valid_opts[0].get('parallel_dim', ''))
-                if len(valid_opts) >= 2 or _multi_dim_opt:
-                    if _multi_dim_opt:
-                        valid_dim_names = [d.strip() for d in valid_opts[0]['parallel_dim'].split(',')][:2]
-                    else:
-                        valid_dim_names = [o['parallel_dim'] for o in valid_opts[:2]]
-                    section += f"\n**Both `{valid_dim_names[0]}` and `{valid_dim_names[1]}` are freely parallelizable.** "
-                    section += "Use a 2D grid to parallelize both simultaneously for best GPU occupancy.\n"
-                    seq_ctx_dims = [
-                        o for o in par_result['options']
-                        if not o['valid'] and any('sequential context' in iss.lower()
-                                                  for iss in o.get('issues', []))
-                    ]
-                    t_dim = None
-                    if seq_ctx_dims:
-                        t_dim = seq_ctx_dims[0]['parallel_dim']
-                    else:
-                        all_opt_dims = set()
-                        for o in par_result['options']:
-                            for d in o['parallel_dim'].split(','):
-                                all_opt_dims.add(d.strip())
-                        all_dims = par_result.get('dims', [])
-                        missing_dims = [d for d in all_dims if d not in all_opt_dims]
-                        if missing_dims:
-                            t_dim = missing_dims[0]
-                    _n_write = par_result.get('n_write_arrays', 0)
-                    if _n_write == 0:
-                        _n_write = len(set(d['array'] for d in par_result.get('self_dependencies', [])
-                                          if 'write_expr' in d))
-                    if _n_write == 0:
-                        import re as _re2
-                        _c_code = par_result.get('c_code', '')
-                        _n_write = len(set(_re2.findall(r'^\s*(\w+)\s*\[', _c_code, _re2.MULTILINE)))
-                    if t_dim and _n_write >= 2:
-                        if _multi_dim_opt:
-                            _total_valid_dims = len([d.strip() for d in valid_opts[0]['parallel_dim'].split(',')])
-                        else:
-                            _total_valid_dims = len(valid_opts)
-
-                        if _total_valid_dims >= 3:
-                            section += f"\n**CRITICAL: Timestep/phase structure**: The `{t_dim}` loop must be in "
-                            section += "**Python host code**, NOT inside the Triton kernel.\n"
-                            section += f"Do NOT put `for {t_dim} in range(...)` inside the Triton kernel — there is no "
-                            section += "global synchronization between timesteps within a single kernel launch, "
-                            section += "which causes **race conditions** on shared arrays.\n"
-                            section += "\n**Use at most 2 kernels per timestep**. Fuse independent phases "
-                            section += "into a single kernel.\n"
-                            section += "\n**Parallelize ALL spatial dimensions**: Flatten all spatial dimensions "
-                            section += "into a single 1D index. Each CTA processes a block of elements from the "
-                            section += "flattened space, recovering (i, j, k) coordinates from the linear index.\n"
-                            section += "\n**Use BLOCK_SIZE = 128** (not larger) to maximize the number of CTAs "
-                            section += "and GPU occupancy.\n"
-                            section += "```python\n"
-                            section += f"BLOCK_SIZE = 128\n"
-                            section += f"total_elements = N_DIM0 * N_DIM1 * N_DIM2  # all spatial dims\n"
-                            section += f"grid = (triton.cdiv(total_elements, BLOCK_SIZE),)\n"
-                            section += f"for {t_dim} in range(TSTEPS):\n"
-                            section += f"    phase_kernel[grid](...)      # ALL independent phases\n"
-                            section += f"    # optional second kernel if needed\n"
-                            section += "```\n"
-                            section += "Inside the kernel, recover coordinates from the flat index:\n"
-                            section += "```python\n"
-                            section += "flat_idx = tl.program_id(0) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)\n"
-                            section += "k = flat_idx % N_K + 1  # +1 to skip boundary\n"
-                            section += "j = (flat_idx // N_K) % N_J + 1\n"
-                            section += "i = flat_idx // (N_K * N_J) + 1\n"
-                            section += "```\n"
-                        else:
-                            section += f"\n**CRITICAL: Timestep/phase structure**: Use `grid=(1,)` with the "
-                            section += f"`{t_dim}` loop **INSIDE** the kernel. This puts everything in a single "
-                            section += "kernel launch, avoiding kernel launch overhead entirely.\n"
-                            section += "```python\n"
-                            section += f"kernel[grid=(1,)](...)  # ONE kernel launch — {t_dim} loop inside\n"
-                            section += "```\n"
-                            section += f"With `grid=(1,)` (single thread block), the `{t_dim}` loop inside the "
-                            section += "kernel is correct — there are no cross-CTA race conditions because "
-                            section += "there is only one CTA. All phases execute sequentially within each "
-                            section += f"timestep, and the `{t_dim}` loop iterates normally.\n"
-                            section += "\n**Inside the kernel**: Use 2D tiling to process all elements:\n"
-                            section += "```python\n"
-                            section += f"for {t_dim} in range(TSTEPS):\n"
-                            section += "    for row_start in range(0, N_ROWS, BLOCK_ROW):\n"
-                            section += "        for col_start in range(0, N_COLS, BLOCK_COL):\n"
-                            section += "            # vectorize within each tile\n"
-                            section += "```\n"
-                            section += "Process all phases for each timestep sequentially within the kernel. "
-                            section += "Vectorize the column dimension with `tl.arange(0, BLOCK_COL)`.\n"
-                cross_phase_invalids = [
-                    o for o in par_result['options']
-                    if not o['valid'] and any('Cross-phase' in iss for iss in o.get('issues', []))
-                ]
-                if cross_phase_invalids:
-                    seq_dims = [o['parallel_dim'] for o in cross_phase_invalids]
-                    _cp_n_write = len(set(d['array'] for d in par_result.get('self_dependencies', [])
-                                         if 'write_expr' in d))
-                    _has_write_conflict = any(
-                        'Write conflict' in iss
-                        for o in cross_phase_invalids
-                        for iss in o.get('issues', [])
-                    )
-                    if _cp_n_write >= 2 and not _has_write_conflict:
-                        if len(valid_opts) == 1 and not par_result.get('has_2d_arrays', False):
-                            # 1D stencil: grid=(1,) with SCALAR loops (no vectorized store-then-load)
-                            par_dim = valid_opts[0]['parallel_dim']
-                            section += f"\n**CRITICAL**: Use `grid=(1,)` with the `{seq_dims[0]}` loop and both phases "
-                            section += "INSIDE a single kernel. Insert `tl.debug_barrier()` between phases "
-                            section += "to flush stores before the next phase reads the same array:\n"
-                            section += "```python\n"
-                            section += f"@triton.jit\n"
-                            section += f"def kernel(A_ptr, B_ptr, N: tl.constexpr, {seq_dims[0].upper()}: tl.constexpr, BLOCK: tl.constexpr):\n"
-                            section += f"    offsets = tl.arange(0, BLOCK)\n"
-                            section += f"    mask = (offsets >= 1) & (offsets < N - 1)\n"
-                            section += f"    for {seq_dims[0]} in range({seq_dims[0].upper()}):\n"
-                            section += f"        tl.debug_barrier()  # ensure previous stores are visible\n"
-                            section += f"        # Phase 1: read A, write B\n"
-                            section += f"        tl.store(B_ptr + offsets, ..., mask=mask)\n"
-                            section += f"        tl.debug_barrier()  # flush B stores before Phase 2 reads B\n"
-                            section += f"        # Phase 2: read B, write A\n"
-                            section += f"        tl.store(A_ptr + offsets, ..., mask=mask)\n"
-                            section += f"\n"
-                            section += f"BLOCK = triton.next_power_of_2(N)\n"
-                            section += f"kernel[(1,)](A, B, N=N, {seq_dims[0].upper()}={seq_dims[0].upper()}, BLOCK=BLOCK)\n"
-                            section += "```\n"
-                            section += "`tl.debug_barrier()` acts as a memory fence within the CTA, ensuring "
-                            section += "vectorized stores are visible to subsequent vectorized loads.\n"
-                        else:
-                            section += f"\n**IMPORTANT**: `{'`, `'.join(seq_dims)}` is INVALID across phases, "
-                            section += "but **within each separate kernel**, both dimensions are safe to parallelize. "
-                            section += "**Split into separate Triton kernels** per phase, launched sequentially "
-                            section += "from Python. Within each kernel, parallelize **BOTH** dimensions "
-                            section += "using a 2D grid — kernel launch barriers resolve the cross-phase "
-                            section += "dependencies.\n"
-                    elif _cp_n_write >= 2 and _has_write_conflict:
-                        par_dim = valid_opts[0]['parallel_dim']
-                        section += f"\n**IMPORTANT**: Use `grid=(1,)` with the `{'`, `'.join(seq_dims)}` loop "
-                        section += f"**INSIDE** the kernel — this puts everything in a single kernel launch, "
-                        section += "avoiding massive launch overhead.\n"
-                        section += "```python\n"
-                        section += f"kernel[grid=(1,)](...)  # ONE launch — {seq_dims[0]} loop inside\n"
-                        section += "```\n"
-                        section += f"With `grid=(1,)`, the sequential `{seq_dims[0]}` loop is correct (single CTA, "
-                        section += "no races). Process ALL phases within each iteration:\n"
-                        section += f"- Reductions: use `tl.sum()` — do NOT use `tl.atomic_add`\n"
-                        section += f"- Per-`{par_dim}` work: use a `for {par_dim}` loop inside the kernel\n"
-                        section += "- All column/row operations: vectorize with `tl.arange(0, BLOCK_SIZE)`\n"
-                analysis_sections.append(section)
-            else:
-                import re as _re
-                write_conflict_opts = []
-                for opt in par_result['options']:
-                    issues = opt.get('issues', [])
-                    array_conflicts = [
-                        iss for iss in issues
-                        if 'Write conflict' in iss
-                        and _re.search(r'write \[[^\]]+\]', iss)
-                    ]
-                    if array_conflicts:
-                        write_conflict_opts.append(opt)
-                if len(write_conflict_opts) >= 2:
-                    dims = par_result.get('dims', [])
-                    _has_2d = par_result.get('has_2d_arrays', False)
-                    if not _has_2d:
-                        _c = par_result.get('c_code', '')
-                        _has_2d = bool(_re.search(r'\w+\[[\w+]+\]\[[\w+]+\]', _c))
-
-                    section = "\n## Opposing Reductions — Fused Kernel\n\n"
-                    section += "**Neither dimension can be parallelized alone** "
-                    section += "because the loop body has reductions into different arrays along opposing dimensions:\n"
-                    for opt in write_conflict_opts:
-                        for iss in opt.get('issues', []):
-                            if 'Write conflict' in iss:
-                                section += f"- {iss}\n"
-                    section += "\n**Fuse both reductions into a SINGLE kernel** "
-                    section += "that iterates **rows** of the shared 2D array "
-                    section += "for coalesced memory access. Both reductions share the same "
-                    section += "row-major loads — splitting would force one kernel into "
-                    section += "strided column access.\n\n"
-                    section += "**Pattern**:\n"
-                    section += "```python\n"
-                    section += "@triton.jit\n"
-                    section += "def fused_kernel(A_ptr, vec1_ptr, vec2_ptr, out1_ptr, out2_ptr,\n"
-                    section += "                 M: tl.constexpr, N: tl.constexpr, BLOCK: tl.constexpr):\n"
-                    section += "    offsets = tl.arange(0, BLOCK)\n"
-                    section += "    col_acc = tl.zeros([BLOCK], dtype=tl.float32)\n"
-                    section += "    for i in range(M):  # iterate ROWS\n"
-                    section += "        mask = offsets < N\n"
-                    section += "        a_row = tl.load(A_ptr + i * N + offsets, mask=mask)  # COALESCED\n"
-                    section += "        v1 = tl.load(vec1_ptr + i)\n"
-                    section += "        row_sum = tl.sum(a_row * tl.load(vec2_ptr + offsets, mask=mask))\n"
-                    section += "        tl.store(out1_ptr + i, row_sum)\n"
-                    section += "        col_acc += v1 * a_row\n"
-                    section += "    tl.store(out2_ptr + offsets, col_acc, mask=offsets < N)\n"
-                    section += "grid = (1,)  # single kernel, both reductions fused\n"
-                    section += "```\n"
-                    section += "\n**Key**: Iterate the ROW dimension as the outer loop. "
-                    section += "Vectorize the COLUMN dimension with `tl.arange()`. "
-                    section += "This ensures ALL loads from the 2D array are coalesced (stride-1).\n"
-                    analysis_sections.append(section)
-                elif (any('Cross-phase' in iss
-                         for o in par_result['options']
-                         for iss in o.get('issues', []))
-                      and not analysis_sections
-                      and not (scalar_exp_result and scalar_exp_result.get('has_scalar_expansion'))
-                      and not (reduction_result and reduction_result.get('is_reduction'))):
-                    section = "\n## Multi-Phase Kernel — Split into Separate Triton Kernels\n\n"
-                    section += "**Both dimensions appear INVALID when the phases are analyzed together**, "
-                    section += "but that is because different loop bodies (phases) share arrays across iterations.\n\n"
-                    section += "**Each phase can be parallelized independently.** "
-                    section += "Split into **separate Triton kernels** — one per top-level `for` loop — "
-                    section += "and parallelize the spatial dimensions within each kernel. "
-                    section += "Kernel launch barriers handle cross-phase deps.\n\n"
-                    section += "For each kernel, use `grid=(OUTPUT_DIM,)` so each CTA computes "
-                    section += "one output element. The kernel launch overhead (microseconds) is "
-                    section += "negligible compared to the parallelism gains.\n"
-                    analysis_sections.append(section)
-                elif par_result.get('source') == 'llvm':
-                    dims = par_result.get('dims', [])
-                    section = "\n## Parallelization Warning\n\n"
-                    section += "**No dimension is safe to parallelize independently.** "
-                    section += "Data dependencies are carried along ALL loop dimensions:\n"
-                    for opt in par_result['options']:
-                        for iss in opt.get('issues', []):
-                            section += f"- `{opt['parallel_dim']}`: {iss}\n"
-                    n_write = par_result.get('n_write_arrays', 1)
-                    if n_write >= 2:
-                        section += "\n**IMPORTANT: Do NOT use `grid=(1,)`.** "
-                        section += "This kernel updates **multiple arrays** in separate phases. "
-                        section += "Split into **separate Triton kernels** launched sequentially from Python "
-                        section += "(one per phase/statement). Within each kernel, parallelize the spatial "
-                        section += "dimensions — kernel launch barriers between phases handle the dependencies.\n"
-                        section += "\nExample pattern:\n"
-                        section += "```python\n"
-                        section += "for t in range(TSTEPS):  # timestep loop in Python\n"
-                        section += "    phase1_kernel[grid](...)  # parallelize i (or i,j) within phase\n"
-                        section += "    phase2_kernel[grid](...)  # next phase, different arrays\n"
-                        section += "```\n"
-                        section += "\n**Minimize kernel launches**: Fuse compatible phases into a single kernel "
-                        section += "when they operate on independent data within each thread. For example, "
-                        section += "a forward sweep and backward sweep on the same row can share a kernel.\n"
-                    else:
-                        section += "\nThis kernel reads and writes the **same array** with neighbor dependencies. "
-                        section += "Use `grid=(1,)` with nested loops to process elements sequentially.\n"
-                    analysis_sections.append(section)
-
-        # Cross-reference WAR scoping with parallelization options
-        if ENABLE_ANALYSIS:
-            if (war_result and war_result.get('loop_level_scoping')
-                    and par_result and par_result.get('options')):
-                loop_scoping = war_result['loop_level_scoping']
-                copies = war_result.get('arrays_needing_copy', [])
-
-                recommendations = []
-                for opt in par_result.get('options', []):
-                    if not opt.get('valid'):
-                        continue
-                    pdim = opt['parallel_dim']
-                    pdim_list = [d.strip() for d in pdim.split(',')]
-                    all_safe = True
-                    needs_copy_arrs = []
-                    for arr in copies:
-                        scoping = loop_scoping.get(arr, {})
-                        safe = scoping.get('safe_to_parallelize_loops', [])
-                        if not all(d in safe for d in pdim_list):
-                            all_safe = False
-                            needs_copy_arrs.append(arr)
-
-                    if all_safe:
-                        recommendations.append(
-                            f"- **RECOMMENDED**: Parallelize `{pdim}` — no WAR copies needed for any array"
-                        )
-                    elif needs_copy_arrs:
-                        recommendations.append(
-                            f"- Parallelize `{pdim}`: must clone {', '.join(f'`{a}`' for a in needs_copy_arrs)} before parallel region"
-                        )
-
-                if recommendations:
-                    section = "\n## WAR + Parallelization Recommendation\n\n"
-                    section += "\n".join(recommendations)
-                    section += "\n"
-                    analysis_sections.append(section)
-
-            if scalar_exp_result and scalar_exp_result.get('has_scalar_expansion'):
-                if HAS_SCALAR_EXPANSION and format_scalar_expansion_for_prompt:
-                    try:
-                        formatted = format_scalar_expansion_for_prompt(kernel_name, scalar_exp_result)
-                        if formatted:
-                            analysis_sections.append(f"\n{formatted}\n")
-                    except Exception:
-                        pass
-
-            if reduction_result and reduction_result.get('is_reduction'):
-                if HAS_REDUCTION and build_reduction_instructions:
-                    try:
-                        formatted = build_reduction_instructions(reduction_result)
-                        if formatted:
-                            analysis_sections.append(f"\n{formatted}\n")
-                    except Exception:
-                        pass
-
-            # GPU parallelization strategy
-            if HAS_GPU_STRATEGY:
-                try:
-                    kernel_file = os.path.join(RODINIA_KERNELS_DIR, f"{kernel_name}.c")
-                    gpu_strategy = analyze_kernel_gpu_strategy(kernel_name, kernel_file)
-                    if gpu_strategy:
-                        pattern = gpu_strategy.get('pattern', '')
-                        if pattern == 'inner_loop_vectorization':
-                            pass  # Skip — grid=(1,) is too conservative
-                        else:
-                            formatted = build_gpu_strategy_instructions(kernel_name, gpu_strategy)
-                            if formatted:
-                                analysis_sections.append(f"\n{formatted}\n")
-                except Exception:
-                    pass
-
-    analysis_text = "\n".join(analysis_sections)
 
     prompt = f"""I have a Rodinia benchmark kernel that I want to implement in Triton for GPU acceleration.
 
@@ -1035,7 +437,14 @@ def generate_correctness_test(kernel_name: str, func_spec: dict, attempt: int = 
     func_id = kernel_name
 
     llm_subdir = "llm_triton" if ENABLE_ANALYSIS else "llm_triton_no_analysis"
-    import_block = f"from {OUTPUT_DIR}.{llm_subdir}.{kernel_name}.attempt{attempt} import {func_id}_triton"
+    attempt_file_abs = str((Path(OUTPUT_DIR) / llm_subdir / kernel_name / f"attempt{attempt}.py").resolve())
+    import_block = (
+        f"import importlib.util\n"
+        f"    _spec = importlib.util.spec_from_file_location(\'_kmod\', \'{attempt_file_abs}\')\n"
+        f"    _mod = importlib.util.module_from_spec(_spec)\n"
+        f"    _spec.loader.exec_module(_mod)\n"
+        f"    {func_id}_triton = _mod.{func_id}_triton"
+    )
 
     test_code = f'''#!/usr/bin/env python3
 """Correctness test for {kernel_name} (Rodinia) - attempt {attempt}"""
@@ -1055,7 +464,7 @@ except ImportError as e:
     sys.exit(1)
 
 # Load C reference
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "rodinia_libs" / "lib{kernel_name}.so"
+C_LIB_PATH = Path("/home/qinxiao/workspace/compiler-guided-triton-gen/pipeline/c_reference") / "rodinia_libs" / "lib{kernel_name}.so"
 if not C_LIB_PATH.exists():
     print(f"C reference library not found: {{C_LIB_PATH}}")
     sys.exit(1)
@@ -1184,7 +593,14 @@ def generate_benchmark_test(kernel_name: str, func_spec: dict, attempt: int = 1)
     tr_call_str = ", ".join(tr_args)
 
     llm_subdir = "llm_triton" if ENABLE_ANALYSIS else "llm_triton_no_analysis"
-    import_block = f"from {OUTPUT_DIR}.{llm_subdir}.{kernel_name}.attempt{attempt} import {func_id}_triton"
+    attempt_file_abs = str((Path(OUTPUT_DIR) / llm_subdir / kernel_name / f"attempt{attempt}.py").resolve())
+    import_block = (
+        f"import importlib.util\n"
+        f"    _spec = importlib.util.spec_from_file_location(\'_kmod\', \'{attempt_file_abs}\')\n"
+        f"    _mod = importlib.util.module_from_spec(_spec)\n"
+        f"    _spec.loader.exec_module(_mod)\n"
+        f"    {func_id}_triton = _mod.{func_id}_triton"
+    )
 
     benchmark_code = f'''#!/usr/bin/env python3
 """Performance Benchmark for {kernel_name} (Rodinia)"""
@@ -1203,7 +619,7 @@ except ImportError as e:
     print(f"Import error: {{e}}")
     sys.exit(1)
 
-C_LIB_PATH = Path(__file__).parent.parent.parent / "c_reference" / "rodinia_libs" / "lib{kernel_name}.so"
+C_LIB_PATH = Path("/home/qinxiao/workspace/compiler-guided-triton-gen/pipeline/c_reference") / "rodinia_libs" / "lib{kernel_name}.so"
 
 def run_c_reference({c_call_str}):
     lib = ctypes.CDLL(str(C_LIB_PATH))

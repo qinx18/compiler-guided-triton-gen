@@ -12,96 +12,100 @@
     \toprule
     \textbf{Metric} & \textbf{WA} & \textbf{NA} \\
     \midrule
-    Pass rate              & 30/30 (100\%) & 28/30 (93\%) \\
-    Median speedup         & 2.07$\times$  & 1.06$\times$ \\
-    Mean speedup           & 2.58$\times$  & 1.52$\times$ \\
-    Kernels $>1\times$     & 20/28         & 14/28         \\
+    Pass rate              & 29/30 (97\%) & 28/30 (93\%) \\
+    First-try passes       & 12            & 8             \\
+    Median speedup         & 0.76$\times$  & 0.88$\times$ \\
+    Mean speedup           & 1.24$\times$  & 1.64$\times$ \\
+    Kernels $>1\times$     & 11/29         & 12/28         \\
     \midrule
     \multicolumn{3}{l}{\emph{Head-to-head (28 common):}} \\
     WA wins ($>$10\% faster) & \multicolumn{2}{c}{12} \\
-    NA wins ($>$10\% faster) & \multicolumn{2}{c}{6 (3 race conditions)}  \\
-    Ties (within 10\%)       & \multicolumn{2}{c}{10}  \\
+    NA wins ($>$10\% faster) & \multicolumn{2}{c}{9}  \\
+    Ties (within 10\%)       & \multicolumn{2}{c}{8}  \\
+    WA-only pass             & \multicolumn{2}{c}{1 (jacobi\_2d)}  \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 Table~\ref{tab:results_1x} summarizes results at standard
-(1$\times$) problem sizes.  All 30 kernels pass with analysis
-guidance; without it, two stencil kernels fail from
-parallelizing dimensions with carried dependences.
+(1$\times$) problem sizes.  With analysis guidance, 29/30 kernels pass
+correctness (1 failure due to LLM nondeterminism); without it, 28/30 pass but analysis uniquely enables \texttt{jacobi\_2d}.
+The median speedup at 1$\times$ sizes is limited by PolyBench's
+small defaults ($N$\,=\,60--120), where GPU launch overhead dominates.
 Compute-bound kernels show strong speedups
-(\texttt{heat\_3d}: 10.27$\times$, \texttt{doitgen}: 7.40$\times$,
-\texttt{covariance}: 5.40$\times$, \texttt{deriche}: 5.14$\times$).
+(\texttt{3mm}: 4.01$\times$, \texttt{covariance}: 3.66$\times$,
+\texttt{deriche}: 3.58$\times$, \texttt{2mm}: 2.97$\times$).
 
-In the head-to-head comparison, 3 of 6 apparent NA wins are \emph{false wins}: the unguided LLM parallelizes dimensions with carried dependences, producing code that runs faster but computes incorrect results. For example, in \texttt{lu}, the NA code launches one GPU thread per row (\texttt{grid=(N,)}), but row~$i$ depends on row~$k$ ($k<i$), causing output differences up to $10^{33}$.
+In the head-to-head comparison, WA wins 12 of 28 common kernels while NA wins 9. The NA wins are largely due to LLM nondeterminism (different code quality across runs) rather than a systematic advantage of unguided generation.
 
 \paragraph{Scaling.}
-At 8$\times$ sizes ($N$: 60$\to$480, matrices: 120$\to$960), median speedup
-rises to 30.73$\times$ over single-threaded C and 8.57$\times$ over 80-thread OpenMP,
-confirming genuine advantage beyond CPU parallelism.
+At 8$\times$ sizes ($N$: 60$\to$480, matrices: 120$\to$960),
+27/30 pass with median speedup of 24.57$\times$ over single-threaded C,
+confirming that GPU advantage grows with problem size.
+Top kernels: \texttt{3mm} (2041$\times$), \texttt{2mm} (2004$\times$),
+\texttt{gemm} (451$\times$), \texttt{syrk} (62$\times$).
 
 \subsection{Profiling-Guided Optimization}
 
 \begin{table}[t]
-  \caption{Representative profiling feedback improvements (PolyBench 1$\times$).
+  \caption{Representative profiling feedback improvements (PolyBench).
     ``Before'' = first correct kernel; ``After'' = best after NCU-guided iterations.}
   \label{tab:profiling}
   \centering\small
   \begin{tabular}{lccl}
     \toprule
-    \textbf{Kernel} & \textbf{Before} & \textbf{After} & \textbf{Bottleneck} \\
+    \textbf{Kernel} & \textbf{Before} & \textbf{After} & \textbf{Scale} \\
     \midrule
-    covariance  & 0.15$\times$ & 5.40$\times$ & latency \\
-    deriche     & 0.11$\times$ & 5.14$\times$ & latency \\
-    3mm         & 0.12$\times$ & 4.24$\times$ & latency \\
-    correlation & 0.29$\times$ & 3.38$\times$ & latency \\
-    adi         & 0.10$\times$ & 2.07$\times$ & latency \\
-    gemver      & 0.16$\times$ & 1.94$\times$ & latency \\
-    gemm        & 2.41$\times$ & 3.10$\times$ & latency \\
-    fdtd\_2d    & 0.85$\times$ & 1.80$\times$ & latency \\
-    durbin      & 0.30$\times$ & 1.47$\times$ & latency \\
+    \multicolumn{4}{l}{\emph{1$\times$ sizes:}} \\
+    3mm         & 0.10$\times$ & 4.01$\times$ & 1$\times$ \\
+    covariance  & 0.11$\times$ & 3.66$\times$ & 1$\times$ \\
+    2mm         & 1.48$\times$ & 2.97$\times$ & 1$\times$ \\
+    syrk        & 1.65$\times$ & 2.07$\times$ & 1$\times$ \\
+    \midrule
+    \multicolumn{4}{l}{\emph{8$\times$ sizes:}} \\
+    gemm        & 120$\times$  & 451$\times$  & 8$\times$ \\
+    correlation & 12$\times$   & 51$\times$   & 8$\times$ \\
+    atax        & 0.4$\times$  & 15$\times$   & 8$\times$ \\
+    syrk        & 24$\times$   & 62$\times$   & 8$\times$ \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-Profiling feedback improved 20 of 28 passing kernels (Table~\ref{tab:profiling} shows representative gains).
-The largest improvements occur on latency-bound kernels where the initial implementation has insufficient parallelism: the NCU metrics reveal low SM and memory utilization ($<$20\%), and the LLM restructures the kernel to use more parallel resources.
-For example, \texttt{covariance} improves from 0.15$\times$ to 5.40$\times$ (36$\times$ gain) as the LLM transforms a single-CTA sequential implementation into a multi-CTA parallel grid after receiving the latency-bound diagnosis.
-
-Correctness is preserved across all profiling iterations: each optimized kernel is re-validated, and attempts that break correctness are automatically rejected.
-The majority of optimization attempts do break correctness---the LLM frequently introduces race conditions when restructuring parallelism.
-This confirms that single-shot prompting is insufficient for reliable optimization and motivates integration with search-based or RL-based methods that can explore many candidates.
+Profiling feedback improved 9 of 29 kernels at 1$\times$ and 12 of 21 benchmarked kernels at 8$\times$ (Table~\ref{tab:profiling}).
+The gains are largest at 8$\times$ sizes where hardware utilization bottlenecks are more pronounced: \texttt{gemm} improves from 120$\times$ to 451$\times$ as the LLM restructures for better memory coalescing after receiving the memory-bound diagnosis.
+Correctness is preserved: each optimized kernel is re-validated, and the majority of optimization attempts that break correctness are automatically rejected.
 
 \subsection{TSVC (151 Kernels)}
 
-\sysname passes 150/151 TSVC kernels (99.3\%), 120 on first attempt.
-At 32\,MB per array, LLM-generated Triton achieves 67$\times$ over single-threaded C,
-10.7$\times$ over 80-thread OpenMP CPU, and \textbf{1.02$\times$ vs.\ OpenMP GPU offloading}
-(\texttt{nvc~-mp=gpu}) on the same GPU---matching production compiler quality.
+\sysname passes 143/151 TSVC kernels (94.7\%), 91 on first attempt.
+At 32\,KB--32\,MB per array, LLM-generated Triton achieves a mean speedup of 2.78$\times$ over single-threaded C,
+with a maximum of 267$\times$.
 
 \subsection{Application Kernels}
 
 \begin{table}[t]
-  \caption{Application kernels: Triton vs.\ OMP~GPU offloading
-    (\texttt{nvc}) on the same GPU.}
+  \caption{Application kernels: Triton speedup vs.\ single-threaded C.}
   \label{tab:realworld}
   \centering\small
-  \begin{tabular}{llccc}
+  \begin{tabular}{llcc}
     \toprule
-    \textbf{Source} & \textbf{Kernel} & \textbf{Tri/OMP\,GPU} & \textbf{WA/ST} & \textbf{NA/ST} \\
+    \textbf{Source} & \textbf{Kernel} & \textbf{WA/ST} & \textbf{Pass?} \\
     \midrule
-    Rodinia & SRAD       & 24.9$\times$  & 24.9$\times$ & 3.5$\times$ \\
-    Rodinia & gaussian   & 249$\times$   & 3.4$\times$  & 3.6$\times$ \\
-    miniMD  & LJ force   & 6.8$\times$   & 25.8$\times$ & 23.0$\times$ \\
-    miniFE  & SpMV       & 3.1$\times$   & 9.0$\times$  & 7.3$\times$ \\
-    Rodinia & lud        & ---$^a$       & 13.2$\times$ & 15.5$\times$ \\
-    Rodinia & lavaMD     & ---$^a$       & 1.5$\times$  & 0.6$\times$ \\
+    ECP     & LJ force   & 24.1$\times$ & Y \\
+    ECP     & SpMV       & 7.1$\times$  & Y \\
+    Rodinia & SRAD       & 12.8$\times$ & Y \\
+    Rodinia & pathfinder & 3.6$\times$  & Y \\
+    Rodinia & gaussian   & 0.6$\times$  & Y \\
+    Rodinia & lud        & 1.3$\times$  & Y \\
+    \midrule
+    Rodinia & hotspot    & ---          & N \\
+    Rodinia & lavaMD     & ---          & N \\
     \bottomrule
-    \multicolumn{5}{l}{\scriptsize $^a$OMP GPU offloading (\texttt{nvc}) fails to compile these kernels.}
   \end{tabular}
 \end{table}
 
-To evaluate generalization, we apply \sysname to 6 Rodinia and 2 ECP kernels (Table~\ref{tab:realworld}).
-All 8 pass with analysis guidance.
-On kernels with OMP~GPU baselines, Triton is 3--249$\times$ faster than \texttt{nvc}'s offloading, due to Triton's block-level model avoiding per-timestep launch overhead (gaussian: 511 timesteps $\times$ 3 launches = 1533 offloads).
-Analysis guidance is most impactful on multi-phase kernels: SRAD improves from 3.5$\times$ (NA) to 24.9$\times$ (WA) via phase decomposition.
+We apply \sysname to 3 Rodinia and 5 ECP/Rodinia application kernels (Table~\ref{tab:realworld}).
+6 of 8 pass correctness with analysis guidance.
+The highest speedups come from compute-intensive kernels:
+\texttt{LJ\_force} (24.1$\times$) and \texttt{SRAD} (12.8$\times$).
+Two kernels fail: \texttt{hotspot} (complex 2D stencil with boundary conditions) and \texttt{lavaMD} (irregular particle interactions), both requiring domain-specific optimizations beyond what the unified analysis provides.

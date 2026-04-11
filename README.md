@@ -76,10 +76,10 @@ NCU profiles the passing kernel, classifies the bottleneck (compute/memory/laten
 
 | Benchmark | Kernels | Correctness | Performance |
 |---|---|---|---|
-| PolyBench/C (1x) | 30 | 28/30 (93%) | Median 2.07x, 20/28 improved by profiling |
-| PolyBench/C (8x) | 30 | 30/30 (100%) | Median 30.73x vs single-threaded C |
-| TSVC | 151 | 150/151 (99%) | 1.02x median vs OpenMP GPU offloading (same GPU) |
-| Rodinia + ECP | 8 | 8/8 (100%) | Up to 249x vs OpenMP GPU offloading |
+| PolyBench/C (1x) | 30 | 29/30 (97%) | Median 0.76x; 9 improved by profiling feedback |
+| PolyBench/C (8x) | 30 | 27/30 (90%) | Median 24.6x vs single-threaded C; 12 improved by profiling |
+| TSVC | 151 | 143/151 (95%) | Mean 2.78x, max 267x vs single-threaded C |
+| Rodinia + ECP | 8 | 6/8 (75%) | Up to 24.1x (LJ force) |
 
 ## Usage
 

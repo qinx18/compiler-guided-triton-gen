@@ -30,14 +30,14 @@ sys.path.append(str(Path(__file__).parent / "utilities"))
 from tsvc_functions_db import TSVC_FUNCTIONS
 from c_code_parser import parse_c_code
 
-# Add PET analysis directory to path
+# Add analysis directory to path
 sys.path.insert(0, "/home/qinxiao/workspace/compiler-guided-triton-gen/analysis")
-try:
-    from compute_war_dependences import analyze_kernel_war
-    HAS_WAR_ANALYSIS = True
-except ImportError:
-    HAS_WAR_ANALYSIS = False
-    analyze_kernel_war = None
+
+from kernel_analysis import analyze_kernel, format_analysis_for_prompt
+
+# Legacy imports kept as stubs for backward compat
+HAS_WAR_ANALYSIS = False
+analyze_kernel_war = None
 
 try:
     from compute_statement_overwrites import analyze_kernel_overwrites, format_overwrite_for_prompt
@@ -476,28 +476,6 @@ def get_exact_function_signature(kernel_name: str) -> Optional[str]:
     return ", ".join(params) if params else None
 
 
-def load_parallelization_analysis(kernel_name: str) -> Optional[dict]:
-    """Run parallelization analysis for a kernel on-the-fly."""
-    if not HAS_PARALLELIZATION_ANALYSIS or analyze_kernel_parallelization is None:
-        return None
-
-    return analyze_kernel_parallelization(kernel_name)
-
-
-def load_war_analysis(kernel_name: str) -> Optional[dict]:
-    """Load WAR anti-dependency analysis for a kernel."""
-    if not HAS_WAR_ANALYSIS or analyze_kernel_war is None:
-        return None
-
-    kernel_file = os.path.join(KERNELS_DIR, f"{kernel_name}.c")
-    if not os.path.exists(kernel_file):
-        return None
-
-    try:
-        return analyze_kernel_war(kernel_file)
-    except Exception:
-        return None
-
 
 def check_war_eliminated_by_overwrite(war_result: dict, overwrite_result: dict) -> bool:
     """
@@ -882,17 +860,6 @@ def build_statement_reordering_instructions(kernel_name: str, reordering_result:
     return ""
 
 
-def load_scalar_expansion_analysis(kernel_name: str) -> Optional[dict]:
-    """Load scalar expansion analysis for a kernel."""
-    if not HAS_SCALAR_EXPANSION_ANALYSIS or analyze_kernel_scalar_expansion is None:
-        return None
-
-    kernel_file = f"/home/qinxiao/workspace/compiler-guided-triton-gen/analysis/kernels/{kernel_name}.c"
-    try:
-        return analyze_kernel_scalar_expansion(kernel_file)
-    except Exception:
-        return None
-
 
 def build_scalar_expansion_instructions(kernel_name: str, expansion_result: dict) -> str:
     """Build specific instructions for handling scalar expansion patterns."""
@@ -907,16 +874,6 @@ def build_scalar_expansion_instructions(kernel_name: str, expansion_result: dict
 
     return ""
 
-
-def load_reduction_analysis(kernel_name: str) -> Optional[dict]:
-    """Load reduction type analysis for a kernel."""
-    if not HAS_REDUCTION_ANALYSIS or analyze_kernel_reduction is None:
-        return None
-
-    try:
-        return analyze_kernel_reduction(kernel_name)
-    except Exception:
-        return None
 
 
 def build_reduction_type_instructions(kernel_name: str, reduction_result: dict) -> str:
@@ -1391,14 +1348,7 @@ def build_parallelization_instructions(kernel_name: str, analysis: Optional[dict
 
 
 def build_base_prompt(kernel_name: str, tsvc_func: dict, exact_sig: str,
-                      war_section: str, par_section: str, overwrite_section: str = "",
-                      compaction_section: str = "", aliasing_section: str = "",
-                      crossing_threshold_section: str = "", loop_unrolling_section: str = "",
-                      early_exit_section: str = "", statement_reordering_section: str = "",
-                      scalar_expansion_section: str = "", reduction_section: str = "",
-                      convolution_section: str = "", interchange_section: str = "",
-                      indirect_section: str = "", loop_distribution_section: str = "",
-                      goto_section: str = "") -> str:
+                      analysis_text: str = "", **kwargs) -> str:
     """Build the base prompt for Triton generation."""
     c_code_section = tsvc_func['kernel_loop']
     if tsvc_func['local_vars']:
@@ -1431,7 +1381,7 @@ def build_base_prompt(kernel_name: str, tsvc_func: dict, exact_sig: str,
 ```c
 {c_code_section}
 ```
-{helper_section}{goto_section}{loop_distribution_section}{loop_unrolling_section}{scalar_expansion_section}{statement_reordering_section}{war_section}{par_section}{reduction_section}{convolution_section}{interchange_section}{indirect_section}{overwrite_section}{compaction_section}{aliasing_section}{crossing_threshold_section}{early_exit_section}
+{helper_section}{analysis_text}
 
 ## Array Information:
 - Arrays `a`, `b`, `c`, `d`, `e` are 1D float arrays of size LEN_1D (typically 32000)
@@ -1644,59 +1594,16 @@ def generate_triton_initial(kernel_name: str) -> Tuple[str, str, str]:
         raise ValueError(f"Could not find function {kernel_name} in TSVC source")
 
     exact_sig = get_exact_function_signature(kernel_name)
-    war_result = load_war_analysis(kernel_name)
-    par_analysis = load_parallelization_analysis(kernel_name)
-    par_section = build_parallelization_instructions(kernel_name, par_analysis)
-    overwrite_result = load_overwrite_analysis(kernel_name)
-    overwrite_section = build_overwrite_instructions(kernel_name, overwrite_result)
-    compaction_result = load_stream_compaction_analysis(kernel_name)
-    compaction_section = build_stream_compaction_instructions(kernel_name, compaction_result)
-    # Load statement reordering BEFORE WAR instructions - statement reordering handles WAR internally
-    statement_reordering_result = load_statement_reordering_analysis(kernel_name)
-    statement_reordering_section = build_statement_reordering_instructions(kernel_name, statement_reordering_result)
-    # Build WAR instructions - skip if statement reordering is applicable (it handles WAR internally)
-    if statement_reordering_result and statement_reordering_result.get('applicable'):
-        war_section = ""  # Statement reordering already includes WAR handling
-    else:
-        war_section = build_war_instructions(kernel_name, war_result, overwrite_result)
-    # Load loop distribution BEFORE aliasing - if it fully transforms a pattern,
-    # aliasing analysis should skip those arrays
-    # BUT: Skip loop distribution if statement reordering is applicable - they can conflict
-    # and statement reordering is the more precise transformation
-    if statement_reordering_result and statement_reordering_result.get('applicable'):
-        loop_distribution_result = None
-        loop_distribution_section = ""
-    else:
-        loop_distribution_result = load_loop_distribution_analysis(kernel_name)
-        loop_distribution_section = build_loop_distribution_instructions(kernel_name, loop_distribution_result)
-    # Aliasing analysis should consider dependencies eliminated by statement reordering and loop distribution
-    aliasing_result = load_pointer_aliasing_analysis(kernel_name, reordering_result=statement_reordering_result, distribution_result=loop_distribution_result)
-    aliasing_section = build_pointer_aliasing_instructions(kernel_name, aliasing_result)
-    crossing_threshold_result = load_crossing_threshold_analysis(kernel_name)
-    crossing_threshold_section = build_crossing_threshold_instructions(kernel_name, crossing_threshold_result)
-    loop_unrolling_result = load_loop_unrolling_analysis(kernel_name)
-    loop_unrolling_section = build_loop_unrolling_instructions(kernel_name, loop_unrolling_result)
-    early_exit_result = load_early_exit_analysis(kernel_name)
-    early_exit_section = build_early_exit_instructions(kernel_name, early_exit_result)
-    scalar_expansion_result = load_scalar_expansion_analysis(kernel_name)
-    scalar_expansion_section = build_scalar_expansion_instructions(kernel_name, scalar_expansion_result)
-    reduction_result = load_reduction_analysis(kernel_name)
-    reduction_section = build_reduction_type_instructions(kernel_name, reduction_result)
-    convolution_result = load_convolution_analysis(kernel_name)
-    convolution_section = build_convolution_pattern_instructions(kernel_name, convolution_result)
-    interchange_result = load_loop_interchange_analysis(kernel_name)
-    interchange_section = build_loop_interchange_instructions(kernel_name, interchange_result)
-    indirect_result = load_indirect_addressing_analysis(kernel_name)
-    indirect_section = build_indirect_addressing_prompt(kernel_name, indirect_result)
-    # Load goto analysis - applies when code has goto statements that PET can't analyze
-    # Only use if no other transformation is applicable
-    if not statement_reordering_result and not loop_distribution_result:
-        goto_result = load_goto_analysis(kernel_name)
-        goto_section = build_goto_instructions(kernel_name, goto_result)
-    else:
-        goto_section = ""
 
-    prompt = build_base_prompt(kernel_name, tsvc_func, exact_sig, war_section, par_section, overwrite_section, compaction_section, aliasing_section, crossing_threshold_section, loop_unrolling_section, early_exit_section, statement_reordering_section, scalar_expansion_section, reduction_section, convolution_section, interchange_section, indirect_section, loop_distribution_section, goto_section)
+    # Unified analysis: single PET call derives all properties
+    kernel_file = os.path.join(KERNELS_DIR, f"{kernel_name}.c")
+    source_code = open(kernel_file).read() if os.path.exists(kernel_file) else ""
+    arrays_dict = {a: "rw" for a in tsvc_func.get("arrays", [])}
+    params_dict = {"N": 32000}
+    analysis = analyze_kernel(kernel_name, source_code, arrays_dict, params_dict)
+    analysis_text = "\n" + format_analysis_for_prompt(analysis)
+
+    prompt = build_base_prompt(kernel_name, tsvc_func, exact_sig, analysis_text=analysis_text)
 
     print(f"  Generating Triton code (attempt 1/{MAX_ATTEMPTS})...")
 
@@ -2091,8 +1998,15 @@ import torch
 import numpy as np
 
 try:
-    from c_reference.tsvc_all_reference import {func_name}_c
-    from test29.llm_triton.{func_name}.attempt{attempt} import {func_name}_triton
+    import importlib.util as _ilu
+    _c_spec = _ilu.spec_from_file_location("_cmod", "{str(Path('c_reference/tsvc_all_reference.py').resolve())}")
+    _c_mod = _ilu.module_from_spec(_c_spec)
+    _c_spec.loader.exec_module(_c_mod)
+    {func_name}_c = _c_mod.{func_name}_c
+    _t_spec = _ilu.spec_from_file_location("_tmod", "{str((Path('../results/tsvc/test29/llm_triton') / func_name / f'attempt{attempt}.py').resolve())}")
+    _t_mod = _ilu.module_from_spec(_t_spec)
+    _t_spec.loader.exec_module(_t_mod)
+    {func_name}_triton = _t_mod.{func_name}_triton
 except ImportError as e:
     print(f"Import error: {{e}}")
     sys.exit(1)
@@ -2351,8 +2265,15 @@ import torch
 import numpy as np
 
 try:
-    from c_reference.tsvc_all_reference import {func_name}_c
-    from test29.llm_triton.{func_name}.attempt{attempt} import {func_name}_triton
+    import importlib.util as _ilu
+    _c_spec = _ilu.spec_from_file_location("_cmod", "{str(Path('c_reference/tsvc_all_reference.py').resolve())}")
+    _c_mod = _ilu.module_from_spec(_c_spec)
+    _c_spec.loader.exec_module(_c_mod)
+    {func_name}_c = _c_mod.{func_name}_c
+    _t_spec = _ilu.spec_from_file_location("_tmod", "{str((Path('../results/tsvc/test29/llm_triton') / func_name / f'attempt{attempt}.py').resolve())}")
+    _t_mod = _ilu.module_from_spec(_t_spec)
+    _t_spec.loader.exec_module(_t_mod)
+    {func_name}_triton = _t_mod.{func_name}_triton
 except ImportError as e:
     print(f"Import error: {{e}}")
     sys.exit(1)
@@ -2550,7 +2471,8 @@ def process_function(func_name: str, func_spec: dict) -> dict:
     llm_triton_dir = test_dir / "llm_triton"
     func_code_dir = llm_triton_dir / func_name  # llm_triton/s000/
     func_raw_dir = llm_triton_dir / "raw_responses" / func_name  # llm_triton/raw_responses/s000/
-    test_dir = Path("my_triton_implementations") / func_name
+    test_dir = Path("../results/tsvc/my_triton_implementations") / func_name
+    test_dir.mkdir(exist_ok=True, parents=True)
 
     # Clean up previous attempts before regenerating
     if func_code_dir.exists():
@@ -2558,8 +2480,7 @@ def process_function(func_name: str, func_spec: dict) -> dict:
     if func_raw_dir.exists():
         shutil.rmtree(func_raw_dir)
 
-    test_dir.mkdir(exist_ok=True)
-    llm_triton_dir.mkdir(exist_ok=True)
+    llm_triton_dir.mkdir(exist_ok=True, parents=True)
     func_code_dir.mkdir(exist_ok=True)
     (llm_triton_dir / "raw_responses").mkdir(exist_ok=True)
     func_raw_dir.mkdir(exist_ok=True)

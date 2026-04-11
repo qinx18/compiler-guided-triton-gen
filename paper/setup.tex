@@ -17,6 +17,6 @@ This isolates the quality of LLM-generated Triton code from hardware differences
 We additionally report against \emph{OMP~CPU} (80-thread OpenMP) and \emph{ST} (single-threaded GCC \texttt{-O3}).
 
 \cparagraph{Evaluation methodology.}
-All speedups measure kernel-only execution time with data pre-staged on the GPU, averaged over 10--50 iterations after warmup.
+Speedups are measured over 50 iterations after 5 warmup iterations. Each iteration includes array re-initialization (GPU \texttt{clone()} for Triton, CPU copy for the C reference) to ensure in-place kernels start from identical data. Triton timing includes \texttt{cuda.synchronize()}.
 For the correctness ablation, we compare \emph{with analysis} (WA) vs.\ \emph{no analysis} (NA, LLM receives only the C source).
 For profiling feedback, we report the initial speedup (first correct kernel) and the final speedup after up to 3 NCU-guided optimization iterations.

@@ -772,27 +772,29 @@ def benchmark():
 
 {array_init_str}
 
-    # C reference benchmark
+    # Pre-allocate numpy arrays for C reference (avoid repeated GPU->CPU transfer in timing)
+{chr(10).join(["    " + f"{a}_src_np = {a}.cpu().numpy().copy()" for a in array_names])}
+
+    # C reference benchmark — time kernel only, not data copy
     c_time = None
     try:
         for _ in range(num_warmup):
-{chr(10).join(["            " + f"{a}_c = {a}.cpu().numpy().copy()" for a in array_names])}
+{chr(10).join(["            " + f"{a}_c = {a}_src_np.copy()" for a in array_names])}
             run_c_reference({c_call_str})
         start = time.perf_counter()
         for _ in range(num_iterations):
-{chr(10).join(["            " + f"{a}_c = {a}.cpu().numpy().copy()" for a in array_names])}
+{chr(10).join(["            " + f"{a}_c = {a}_src_np.copy()" for a in array_names])}
             run_c_reference({c_call_str})
         c_time = (time.perf_counter() - start) / num_iterations
     except Exception as e:
         print(f"C ref error: {{e}}")
 
-    # Triton benchmark
+    # Triton benchmark — time kernel only, not data copy
     tr_time = None
     try:
         for _ in range(num_warmup):
 {chr(10).join(["            " + f"{a}_tr = {a}.clone()" for a in array_names])}
             {func_id}_triton({tr_call_str})
-        torch.cuda.synchronize()
         torch.cuda.synchronize()
         start = time.perf_counter()
         for _ in range(num_iterations):
