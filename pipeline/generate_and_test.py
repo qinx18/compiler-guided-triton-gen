@@ -166,6 +166,7 @@ KERNELS_DIR = "/home/qinxiao/workspace/compiler-guided-triton-gen/analysis/kerne
 # C reference is pre-compiled in c_reference/tsvc_all_reference.py
 
 MAX_ATTEMPTS = 10
+ENABLE_ANALYSIS = True
 USE_OMP = False  # When True, compile C reference with OpenMP
 BENCHMARK_DATA_SIZE = None  # Override: "32MB", "3200MB", or None for default (32K/256)
 
@@ -1596,12 +1597,14 @@ def generate_triton_initial(kernel_name: str) -> Tuple[str, str, str]:
     exact_sig = get_exact_function_signature(kernel_name)
 
     # Unified analysis: single PET call derives all properties
-    kernel_file = os.path.join(KERNELS_DIR, f"{kernel_name}.c")
-    source_code = open(kernel_file).read() if os.path.exists(kernel_file) else ""
-    arrays_dict = {a: "rw" for a in tsvc_func.get("arrays", [])}
-    params_dict = {"N": 32000}
-    analysis = analyze_kernel(kernel_name, source_code, arrays_dict, params_dict)
-    analysis_text = "\n" + format_analysis_for_prompt(analysis)
+    analysis_text = ""
+    if ENABLE_ANALYSIS:
+        kernel_file = os.path.join(KERNELS_DIR, f"{kernel_name}.c")
+        source_code = open(kernel_file).read() if os.path.exists(kernel_file) else ""
+        arrays_dict = {a: "rw" for a in tsvc_func.get("arrays", [])}
+        params_dict = {"N": 32000}
+        analysis = analyze_kernel(kernel_name, source_code, arrays_dict, params_dict)
+        analysis_text = "\n" + format_analysis_for_prompt(analysis)
 
     prompt = build_base_prompt(kernel_name, tsvc_func, exact_sig, analysis_text=analysis_text)
 
@@ -2652,7 +2655,13 @@ def process_function(func_name: str, func_spec: dict) -> dict:
 
 def main():
     """Main automation pipeline."""
-    global USE_OMP, BENCHMARK_DATA_SIZE
+    global USE_OMP, BENCHMARK_DATA_SIZE, ENABLE_ANALYSIS
+
+    # Check for --no-analysis flag
+    if '--no-analysis' in sys.argv:
+        sys.argv.remove('--no-analysis')
+        ENABLE_ANALYSIS = False
+        print("Analysis DISABLED (ablation mode)")
 
     # Check for --omp flag (multi-threaded C reference)
     if '--omp' in sys.argv:

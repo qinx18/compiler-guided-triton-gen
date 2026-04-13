@@ -8,15 +8,17 @@ We use PyTorch~2.5.1, Triton~3.1.0, CUDA~12.4, GCC~11.4.0, and Claude Sonnet~4~\
 \cparagraph{Benchmarks.}
 We evaluate on three benchmark suites:
 (1)~\emph{PolyBench/C}~\cite{polybench}: 30 numerical kernels (stencils, linear algebra, data mining) at default sizes ($N$=60--120) and 8$\times$ scale ($N$=480--960);
-(2)~\emph{TSVC}~\cite{callahan1988tsvc}: 151 loop kernels covering linear traversals, reductions, indirect addressing, and loop-carried dependences, benchmarked at 32\,MB and 3200\,MB per array;
-(3)~8 application kernels from Rodinia~\cite{che2009rodinia} (SRAD, lud, gaussian, lavaMD, hotspot, pathfinder) and ECP proxy applications~\cite{heroux2009mantevo} (miniMD LJ~force, miniFE SpMV).
+(2)~\emph{TSVC}~\cite{callahan1988tsvc}: 151 loop kernels covering linear traversals, reductions, indirect addressing, and loop-carried dependences;
+(3)~8 application kernels from Rodinia~\cite{che2009rodinia} and ECP proxy applications~\cite{heroux2009mantevo}.
 
-\cparagraph{Baselines.}
-The primary comparison is against \emph{OMP~GPU}---OpenMP GPU offloading compiled by NVIDIA \texttt{nvc} with managed memory, running on the \emph{same} GPU as Triton.
-This isolates the quality of LLM-generated Triton code from hardware differences.
-We additionally report against \emph{OMP~CPU} (80-thread OpenMP) and \emph{ST} (single-threaded GCC \texttt{-O3}).
+\cparagraph{Configurations.}
+On PolyBench/C (our primary benchmark), we compare three configurations:
+\begin{itemize}
+\item \emph{Agent}: An autonomous LLM agent with tool use (write code, run tests, run benchmarks). The agent sees full error output and decides its own retry strategy. No compiler analysis. Up to 10 correctness turns + 3 optimization turns.
+\item \emph{NA} (No Analysis): The LLM receives only the C source code with classified error feedback on retry. Same turn budget as the agent.
+\item \emph{WA+Prof} (With Analysis + Profiling): Our full method. The LLM receives compiler-derived analysis facts. After correctness, NCU profiling feedback guides up to 3 optimization iterations.
+\end{itemize}
+On TSVC and application kernels, we report WA+Prof only (our method).
 
 \cparagraph{Evaluation methodology.}
-Speedups are measured over 50 iterations after 5 warmup iterations. Each iteration includes array re-initialization (GPU \texttt{clone()} for Triton, CPU copy for the C reference) to ensure in-place kernels start from identical data. Triton timing includes \texttt{cuda.synchronize()}.
-For the correctness ablation, we compare \emph{with analysis} (WA) vs.\ \emph{no analysis} (NA, LLM receives only the C source).
-For profiling feedback, we report the initial speedup (first correct kernel) and the final speedup after up to 3 NCU-guided optimization iterations.
+Speedups are measured over 50 iterations after 5 warmup iterations. Each iteration includes array re-initialization (GPU \texttt{clone()} for Triton, CPU \texttt{numpy.copy()} for the C reference) to ensure in-place kernels start from identical data. Triton timing includes \texttt{cuda.synchronize()}.

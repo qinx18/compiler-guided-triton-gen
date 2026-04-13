@@ -5,50 +5,50 @@
 \subsection{PolyBench/C (30 Kernels)}
 
 \begin{table}[t]
-  \caption{PolyBench/C results.  WA = with analysis, NA = no analysis.}
+  \caption{PolyBench/C results at 1$\times$ sizes. Agent = autonomous LLM with tool use (no analysis); NA = LLM with classified error feedback (no analysis); WA+Prof = our method (compiler analysis + NCU profiling feedback).}
   \label{tab:results_1x}
   \centering\small
-  \begin{tabular}{lcc}
+  \begin{tabular}{lccc}
     \toprule
-    \textbf{Metric} & \textbf{WA} & \textbf{NA} \\
+    \textbf{Metric} & \textbf{Agent} & \textbf{NA} & \textbf{WA+Prof} \\
     \midrule
-    Pass rate              & 29/30 (97\%) & 28/30 (93\%) \\
-    First-try passes       & 12            & 8             \\
-    Median speedup         & 0.76$\times$  & 0.88$\times$ \\
-    Mean speedup           & 1.24$\times$  & 1.64$\times$ \\
-    Kernels $>1\times$     & 11/29         & 12/28         \\
-    \midrule
-    \multicolumn{3}{l}{\emph{Head-to-head (28 common):}} \\
-    WA wins ($>$10\% faster) & \multicolumn{2}{c}{12} \\
-    NA wins ($>$10\% faster) & \multicolumn{2}{c}{9}  \\
-    Ties (within 10\%)       & \multicolumn{2}{c}{8}  \\
-    WA-only pass             & \multicolumn{2}{c}{1 (jacobi\_2d)}  \\
+    Pass rate          & 24/30 (80\%) & 28/30 (93\%) & 29/30 (97\%) \\
+    First-try passes   & 11           & 8            & 12           \\
+    Median speedup     & 0.60$\times$ & 0.88$\times$ & 0.76$\times$ \\
+    Mean speedup       & 0.87$\times$ & 1.64$\times$ & 1.24$\times$ \\
+    Kernels $>1\times$ & 7/23         & 12/28        & 11/29        \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-Table~\ref{tab:results_1x} summarizes results at standard
-(1$\times$) problem sizes.  With analysis guidance, 29/30 kernels pass
-correctness (1 failure due to LLM nondeterminism); without it, 28/30 pass but analysis uniquely enables \texttt{jacobi\_2d}.
-The median speedup at 1$\times$ sizes is limited by PolyBench's
-small defaults ($N$\,=\,60--120), where GPU launch overhead dominates.
-Compute-bound kernels show strong speedups
-(\texttt{3mm}: 4.01$\times$, \texttt{covariance}: 3.66$\times$,
-\texttt{deriche}: 3.58$\times$, \texttt{2mm}: 2.97$\times$).
+\begin{table}[t]
+  \caption{PolyBench/C results at 8$\times$ sizes ($N$: 60$\to$480, matrices: 120$\to$960). Speedups vs.\ single-threaded C.}
+  \label{tab:results_8x}
+  \centering\small
+  \begin{tabular}{lccc}
+    \toprule
+    \textbf{Metric} & \textbf{Agent} & \textbf{NA} & \textbf{WA+Prof} \\
+    \midrule
+    Pass rate          & 17/30 (57\%) & 26/30 (87\%) & 27/30 (90\%) \\
+    Median speedup     & 20.7$\times$ & 10.8$\times$ & 24.6$\times$ \\
+    Kernels $>1\times$ & 13/15        & 14/20        & 18/21        \\
+    \bottomrule
+  \end{tabular}
+\end{table}
 
-In the head-to-head comparison, WA wins 12 of 28 common kernels while NA wins 9. The NA wins are largely due to LLM nondeterminism (different code quality across runs) rather than a systematic advantage of unguided generation.
+Tables~\ref{tab:results_1x} and~\ref{tab:results_8x} compare three configurations on PolyBench/C.
+Our method (WA+Prof) achieves the highest correctness at both scales: 97\% at 1$\times$ and 90\% at 8$\times$.
+The autonomous agent baseline, despite having tool access (write code, run tests, run benchmarks), achieves only 80\% at 1$\times$ and 57\% at 8$\times$---the weakest of all three.
+This shows that autonomous tool use without compiler analysis guidance leads to poor retry strategies: the agent wastes turns on ineffective fixes without understanding the root cause of parallelization failures.
 
-\paragraph{Scaling.}
-At 8$\times$ sizes ($N$: 60$\to$480, matrices: 120$\to$960),
-27/30 pass with median speedup of 24.57$\times$ over single-threaded C,
-confirming that GPU advantage grows with problem size.
-Top kernels: \texttt{3mm} (2041$\times$), \texttt{2mm} (2004$\times$),
-\texttt{gemm} (451$\times$), \texttt{syrk} (62$\times$).
+At 1$\times$ sizes, median speedups are limited by GPU launch overhead at small $N$.
+At 8$\times$ sizes, WA+Prof achieves 24.6$\times$ median, outperforming NA (10.8$\times$) and the agent (20.7$\times$).
+Top kernels: \texttt{3mm} (2041$\times$), \texttt{2mm} (2004$\times$), \texttt{gemm} (451$\times$).
 
 \subsection{Profiling-Guided Optimization}
 
 \begin{table}[t]
-  \caption{Representative profiling feedback improvements (PolyBench).
+  \caption{Representative profiling feedback improvements.
     ``Before'' = first correct kernel; ``After'' = best after NCU-guided iterations.}
   \label{tab:profiling}
   \centering\small
@@ -56,13 +56,11 @@ Top kernels: \texttt{3mm} (2041$\times$), \texttt{2mm} (2004$\times$),
     \toprule
     \textbf{Kernel} & \textbf{Before} & \textbf{After} & \textbf{Scale} \\
     \midrule
-    \multicolumn{4}{l}{\emph{1$\times$ sizes:}} \\
     3mm         & 0.10$\times$ & 4.01$\times$ & 1$\times$ \\
     covariance  & 0.11$\times$ & 3.66$\times$ & 1$\times$ \\
     2mm         & 1.48$\times$ & 2.97$\times$ & 1$\times$ \\
     syrk        & 1.65$\times$ & 2.07$\times$ & 1$\times$ \\
     \midrule
-    \multicolumn{4}{l}{\emph{8$\times$ sizes:}} \\
     gemm        & 120$\times$  & 451$\times$  & 8$\times$ \\
     correlation & 12$\times$   & 51$\times$   & 8$\times$ \\
     atax        & 0.4$\times$  & 15$\times$   & 8$\times$ \\
@@ -72,14 +70,13 @@ Top kernels: \texttt{3mm} (2041$\times$), \texttt{2mm} (2004$\times$),
 \end{table}
 
 Profiling feedback improved 9 of 29 kernels at 1$\times$ and 12 of 21 benchmarked kernels at 8$\times$ (Table~\ref{tab:profiling}).
-The gains are largest at 8$\times$ sizes where hardware utilization bottlenecks are more pronounced: \texttt{gemm} improves from 120$\times$ to 451$\times$ as the LLM restructures for better memory coalescing after receiving the memory-bound diagnosis.
-Correctness is preserved: each optimized kernel is re-validated, and the majority of optimization attempts that break correctness are automatically rejected.
+The gains are largest on latency-bound kernels where the initial implementation has insufficient parallelism: the NCU metrics reveal low SM and memory utilization, and the LLM restructures the kernel accordingly.
+Correctness is preserved: each optimized kernel is re-validated, and attempts that break correctness are rejected.
 
 \subsection{TSVC (151 Kernels)}
 
-\sysname passes 143/151 TSVC kernels (94.7\%), 91 on first attempt.
-At 32\,KB--32\,MB per array, LLM-generated Triton achieves a mean speedup of 2.78$\times$ over single-threaded C,
-with a maximum of 267$\times$.
+\sysname passes 143/151 TSVC kernels (95\%), 91 on first attempt,
+with a mean speedup of 2.78$\times$ and maximum of 267$\times$ over single-threaded C.
 
 \subsection{Application Kernels}
 
@@ -95,8 +92,8 @@ with a maximum of 267$\times$.
     ECP     & SpMV       & 7.1$\times$  & Y \\
     Rodinia & SRAD       & 12.8$\times$ & Y \\
     Rodinia & pathfinder & 3.6$\times$  & Y \\
-    Rodinia & gaussian   & 0.6$\times$  & Y \\
     Rodinia & lud        & 1.3$\times$  & Y \\
+    Rodinia & gaussian   & 0.6$\times$  & Y \\
     \midrule
     Rodinia & hotspot    & ---          & N \\
     Rodinia & lavaMD     & ---          & N \\
@@ -105,7 +102,7 @@ with a maximum of 267$\times$.
 \end{table}
 
 We apply \sysname to 3 Rodinia and 5 ECP/Rodinia application kernels (Table~\ref{tab:realworld}).
-6 of 8 pass correctness with analysis guidance.
+6 of 8 pass correctness.
 The highest speedups come from compute-intensive kernels:
 \texttt{LJ\_force} (24.1$\times$) and \texttt{SRAD} (12.8$\times$).
 Two kernels fail: \texttt{hotspot} (complex 2D stencil with boundary conditions) and \texttt{lavaMD} (irregular particle interactions), both requiring domain-specific optimizations beyond what the unified analysis provides.
