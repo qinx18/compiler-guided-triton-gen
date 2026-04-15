@@ -127,13 +127,17 @@ TVM~\cite{chen2018tvm} and Halide~\cite{ragan2013halide} use auto-scheduling wit
 
 
 %% ===================================================================
-\section{Conclusion}
+\section{Conclusion \& Future Work}
 \label{sec:conclusion}
-We presented \sysname, a system that combines compiler-based analysis with LLM code generation for translating C loop nests to Triton GPU kernels. A unified analysis module calls PET once per kernel and derives all parallelization constraints (safe dimensions, WAR dependences, reductions, memory patterns) from the single polyhedral representation. These are rendered as structured facts in the LLM prompt via a pattern-agnostic renderer, replacing pattern-specific templates.
+We presented \sysname, a system that augments LLM-based code generation with compiler analysis for translating C loop nests to Triton GPU kernels. By deriving all parallelization constraints from a single polyhedral analysis invocation and rendering them as structured facts, \sysname provides the LLM with precise correctness guidance without pattern-specific prompt engineering.
 
-\sysname achieves 97\% correctness on PolyBench/C (29/30) and 95\% on TSVC (143/151), outperforming both an autonomous LLM agent with tool use (80\% on PolyBench) and an unguided LLM baseline (93\%). At 8$\times$ sizes, the correctness gap widens further: 90\% (WA) vs.\ 57\% (agent) vs.\ 87\% (NA). This demonstrates that compiler analysis provides stronger correctness guarantees than autonomous tool use.
+Our experiments demonstrate that compiler-derived analysis significantly improves both correctness and performance over unguided LLM baselines and autonomous LLM agents. Notably, an autonomous agent with full tool access (code execution, testing, debugging) achieves lower correctness than our analysis-guided approach, showing that structured compiler knowledge is more valuable than autonomous trial-and-error for parallel code generation. The profiling feedback loop further improves performance by identifying and addressing hardware utilization bottlenecks through iterative optimization.
 
-Profiling feedback improved 9 of 29 kernels at 1$\times$ and 12 of 21 at 8$\times$. Future work will integrate compiler analysis and profiling metrics as reward signals in search-based or RL-based optimization frameworks.
+Several directions remain for future work.
+First, extending the agent baseline comparison to TSVC and application benchmarks would provide a more comprehensive evaluation of when compiler analysis outperforms autonomous tool use.
+Second, our current correctness validation relies on input/output comparison, which cannot guarantee equivalence for all inputs. Integrating formal equivalence checking for affine programs~\cite{verdoolaege2012equiv,barthou2012widening,lefevre2023verified} would provide stronger correctness guarantees, particularly for kernels with complex recurrence patterns where test-based validation is insufficient.
+Third, following the decoupled planning-and-implementation strategy shown effective in recent kernel search methods~\cite{cao2026ksearch}, we plan to separate high-level parallelization strategy selection (guided by compiler analysis) from low-level Triton code instantiation, enabling the system to explore non-monotonic optimization paths without abandoning promising strategies due to buggy intermediate implementations.
+Fourth, analyzing the \emph{generated} Triton code using Triton's own compiler IR (e.g., memory coalescing analysis, occupancy estimation) and feeding this back to the LLM would create a closed-loop optimization cycle that leverages target-language-specific information unavailable from the source-level analysis alone.
 
 %% ===================================================================
 %% References
@@ -265,6 +269,21 @@ X.~Cao, J.~Zhai, P.~Li, et~al.
 Z.~Wen, S.~Shao, Z.~Li, et~al.
 \newblock {AscendCraft}: Automatic {Ascend} {NPU} kernel generation via {DSL}-guided transcompilation.
 \newblock \emph{arXiv preprint arXiv:2601.22760}, 2026.
+
+\bibitem{verdoolaege2012equiv}
+S.~Verdoolaege, G.~Janssens, and M.~Bruynooghe.
+\newblock Equivalence checking of static affine programs using widening to handle recurrences.
+\newblock In \emph{Proc. CAV}, 2012.
+
+\bibitem{barthou2012widening}
+D.~Barthou, P.~Music, and A.~Cohen.
+\newblock Equivalence checking of static affine programs.
+\newblock \emph{ACM SIGPLAN Notices}, 2002.
+
+\bibitem{lefevre2023verified}
+C.~Lef\`evre, A.~Music, and L.-N.~Pouchet.
+\newblock Verified code generation for the polyhedral model.
+\newblock In \emph{Proc. PLDI}, 2023.
 
 \end{thebibliography}
 

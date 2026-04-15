@@ -17,7 +17,7 @@ For example, in \texttt{gemm}, the analysis confirms that both \texttt{i} and \t
 \emph{(ii)~WAR dependences.}
 Write-after-read conflicts are identified when an array is both read and written at different iteration points. The analysis distinguishes RAW (sequential dependence) from WAR (parallel hazard) and reports which loops carry the conflict.
 
-\emph{(iii)~Memory access patterns.}
+\emph{(iii)~Structured access constraints.}
 Stencil patterns (neighboring-element reads requiring synchronization barriers), triangular access (bounds depending on outer variables, e.g., \texttt{j < i}), and cross-phase dependencies (phases writing different arrays under the same outer loop) are detected from the access structure.
 
 \emph{(iv)~Reductions.}
@@ -52,13 +52,14 @@ All analysis results are stored in a unified JSON schema with fixed fields, rega
 \end{itemize}
 
 The LLM receives the analysis as \emph{facts} (``dimension \texttt{j} is safe to parallelize; dimension \texttt{t} has cross-phase dependencies; stencil pattern detected'') and autonomously decides the implementation strategy, rather than following a prescriptive code template. This approach reduces prompt maintenance burden and allows the LLM to apply its own knowledge of Triton programming patterns.
+The prompt also includes the concrete problem dimensions (e.g., $N$=60 at 1$\times$, $N$=480 at 8$\times$), so experiments at different scales use independent LLM generations that may produce different implementations.
 
 \subsection{Generation and Iterative Refinement}
 \sysname invokes the LLM (Claude Sonnet~4~\cite{anthropic2025claude}) and validates the generated kernel against the C reference (compiled with GCC or Clang) using identical random inputs and element-wise FP32 tolerance checks. On validation failure, \sysname classifies the error into one of four categories:
 \emph{(i)}~compilation or runtime errors (syntax errors, missing imports, Triton JIT compilation failures);
 \emph{(ii)}~numerical errors (output values exceed tolerance thresholds);
 \emph{(iii)}~missing synchronization barriers (detected via pre-validation for stencil kernels where \texttt{tl.debug\_barrier()} is required between phases);
-\emph{(iv)}~low performance (speedup $<$0.1$\times$, indicating the kernel is effectively sequential).
+\emph{(iv)}~Low performance (speedup $< 0.1\times$), indicating that the kernel is severely under-optimized and fails to effectively exploit GPU parallelism.
 Each category triggers a targeted retry prompt with error-specific feedback and the previous attempt's code. This process repeats for up to 10 attempts, with a context reset after the 6th attempt to avoid error accumulation in the conversation history.
 
 \subsection{Profiling-Guided Optimization}

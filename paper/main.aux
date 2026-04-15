@@ -45,22 +45,20 @@
 \@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Profiling-Guided Optimization}{3}{subsection.2.4}\protected@file@percent }
 \newlabel{sec:profiling}{{2.4}{3}{Profiling-Guided Optimization}{subsection.2.4}{}}
 \@writefile{toc}{\contentsline {section}{\numberline {3}Evaluation Setup}{3}{section.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {4}Experimental Results}{3}{section.4}\protected@file@percent }
-\newlabel{sec:eval}{{4}{3}{Experimental Results}{section.4}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}PolyBench/C (30 Kernels)}{3}{subsection.4.1}\protected@file@percent }
 \citation{callahan1988tsvc}
 \citation{che2009rodinia}
 \@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces PolyBench/C results at 1$\times $ sizes. Agent = autonomous LLM with tool use (no analysis); NA = LLM with classified error feedback (no analysis); WA+Prof = our method (compiler analysis + NCU profiling feedback).\relax }}{4}{table.caption.7}\protected@file@percent }
 \newlabel{tab:results_1x}{{1}{4}{PolyBench/C results at 1$\times $ sizes. Agent = autonomous LLM with tool use (no analysis); NA = LLM with classified error feedback (no analysis); WA+Prof = our method (compiler analysis + NCU profiling feedback).\relax }{table.caption.7}{}}
 \@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces PolyBench/C results at 8$\times $ sizes ($N$: 60$\to $480, matrices: 120$\to $960). Speedups vs.\ single-threaded C.\relax }}{4}{table.caption.8}\protected@file@percent }
 \newlabel{tab:results_8x}{{2}{4}{PolyBench/C results at 8$\times $ sizes ($N$: 60$\to $480, matrices: 120$\to $960). Speedups vs.\ single-threaded C.\relax }{table.caption.8}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Experimental Results}{4}{section.4}\protected@file@percent }
+\newlabel{sec:eval}{{4}{4}{Experimental Results}{section.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}PolyBench/C (30 Kernels)}{4}{subsection.4.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{Correctness.}{4}{section*.9}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{Performance.}{4}{section*.10}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Profiling-Guided Optimization}{4}{subsection.4.2}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Representative profiling feedback improvements. ``Before'' = first correct kernel; ``After'' = best after NCU-guided iterations.\relax }}{4}{table.caption.11}\protected@file@percent }
 \newlabel{tab:profiling}{{3}{4}{Representative profiling feedback improvements. ``Before'' = first correct kernel; ``After'' = best after NCU-guided iterations.\relax }{table.caption.11}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Application kernels: Triton speedup vs.\ single-threaded C.\relax }}{4}{table.caption.12}\protected@file@percent }
-\newlabel{tab:realworld}{{4}{4}{Application kernels: Triton speedup vs.\ single-threaded C.\relax }{table.caption.12}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Profiling-Guided Optimization}{4}{subsection.4.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {4.3}TSVC (151 Kernels)}{4}{subsection.4.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {4.4}Application Kernels}{4}{subsection.4.4}\protected@file@percent }
 \citation{chen2024chatgpt}
@@ -77,6 +75,8 @@
 \citation{verdoolaege2013ppcg}
 \citation{chen2018tvm}
 \citation{ragan2013halide}
+\citation{verdoolaege2012equiv,barthou2012widening,lefevre2023verified}
+\citation{cao2026ksearch}
 \bibstyle{ACM-Reference-Format}
 \bibcite{tillet2019triton}{{1}{}{{}}{{}}}
 \bibcite{chen2024chatgpt}{{2}{}{{}}{{}}}
@@ -89,6 +89,16 @@
 \bibcite{chen2018tvm}{{9}{}{{}}{{}}}
 \bibcite{ragan2013halide}{{10}{}{{}}{{}}}
 \bibcite{bondhugula2008pluto}{{11}{}{{}}{{}}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Application kernels: Triton speedup vs.\ single-threaded C.\relax }}{5}{table.caption.12}\protected@file@percent }
+\newlabel{tab:realworld}{{4}{5}{Application kernels: Triton speedup vs.\ single-threaded C.\relax }{table.caption.12}{}}
+\@writefile{toc}{\contentsline {paragraph}{Limitations.}{5}{section*.13}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}Related Work}{5}{section.5}\protected@file@percent }
+\newlabel{sec:related}{{5}{5}{Related Work}{section.5}{}}
+\@writefile{toc}{\contentsline {paragraph}{LLM Code Generation for GPUs.}{5}{section*.14}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Polyhedral Compilation and Auto-Scheduling.}{5}{section*.15}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Conclusion \& Future Work}{5}{section.6}\protected@file@percent }
+\newlabel{sec:conclusion}{{6}{5}{Conclusion \& Future Work}{section.6}{}}
+\@writefile{toc}{\contentsline {section}{References}{5}{section*.17}\protected@file@percent }
 \bibcite{verdoolaege2013ppcg}{{12}{}{{}}{{}}}
 \bibcite{che2009rodinia}{{13}{}{{}}{{}}}
 \bibcite{heroux2009mantevo}{{14}{}{{}}{{}}}
@@ -102,18 +112,13 @@
 \bibcite{dong2026kernelblaster}{{22}{}{{}}{{}}}
 \bibcite{cao2026ascendkernelgen}{{23}{}{{}}{{}}}
 \bibcite{wen2026ascendcraft}{{24}{}{{}}{{}}}
+\bibcite{verdoolaege2012equiv}{{25}{}{{}}{{}}}
+\bibcite{barthou2012widening}{{26}{}{{}}{{}}}
+\bibcite{lefevre2023verified}{{27}{}{{}}{{}}}
 \newlabel{tocindent-1}{0pt}
 \newlabel{tocindent0}{0pt}
 \newlabel{tocindent1}{4.62497pt}
 \newlabel{tocindent2}{11.81937pt}
 \newlabel{tocindent3}{0pt}
 \providecommand\NAT@force@numbers{}\NAT@force@numbers
-\@writefile{toc}{\contentsline {paragraph}{Limitations.}{5}{section*.13}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {5}Related Work}{5}{section.5}\protected@file@percent }
-\newlabel{sec:related}{{5}{5}{Related Work}{section.5}{}}
-\@writefile{toc}{\contentsline {paragraph}{LLM Code Generation for GPUs.}{5}{section*.14}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Polyhedral Compilation and Auto-Scheduling.}{5}{section*.15}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {6}Conclusion}{5}{section.6}\protected@file@percent }
-\newlabel{sec:conclusion}{{6}{5}{Conclusion}{section.6}{}}
-\@writefile{toc}{\contentsline {section}{References}{5}{section*.17}\protected@file@percent }
-\newlabel{TotPages}{{5}{5}{}{page.5}{}}
+\newlabel{TotPages}{{6}{6}{}{page.6}{}}

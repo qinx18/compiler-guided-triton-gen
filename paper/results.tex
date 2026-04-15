@@ -16,7 +16,7 @@
     First-try passes   & 11           & 8            & 12           \\
     Median speedup     & 0.60$\times$ & 0.88$\times$ & 0.76$\times$ \\
     Mean speedup       & 0.87$\times$ & 1.64$\times$ & 1.24$\times$ \\
-    Kernels $>1\times$ & 7/23         & 12/28        & 11/29        \\
+    \# Kernels $>1\times$ & 7/23         & 12/28        & 11/29        \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -30,9 +30,13 @@
     \textbf{Metric} & \textbf{Agent} & \textbf{NA} & \textbf{WA+Prof} \\
     \midrule
     Pass rate          & 17/30 (57\%) & 26/30 (87\%) & 27/30 (90\%) \\
+    First-try passes   & 9            & 14           & 16           \\
     Median speedup     & 20.7$\times$ & 10.8$\times$ & 24.6$\times$ \\
-    Kernels $>1\times$ & 13/15        & 14/20        & 18/21        \\
+    Mean speedup$^*$   & 162.9$\times$ & 16.2$\times$ & 233.5$\times$ \\
+    \# Kernels $>1\times$ & 13/15        & 14/20        & 18/21        \\
     \bottomrule
+    \multicolumn{4}{l}{\scriptsize $^*$Mean skewed by matrix multiply kernels (2mm: 2004$\times$, 3mm: 2041$\times$);} \\
+    \multicolumn{4}{l}{\scriptsize median is the more representative metric.}
   \end{tabular}
 \end{table}
 
@@ -47,7 +51,8 @@ The NA baseline (93\%) outperforms the agent, suggesting that classified error f
 
 \paragraph{Performance.}
 At 1$\times$ sizes, median speedups are modest across all configurations due to GPU launch overhead at small $N$.
-At 8$\times$ sizes, WA+Prof achieves 24.6$\times$ median, compared to 10.8$\times$ for NA and 20.7$\times$ for the agent, because compiler analysis identifies the correct parallelization strategy upfront.
+The 8$\times$ results (Table~\ref{tab:results_8x}) better reflect practical scenarios where GPUs provide genuine benefit, as the data volume is sufficient to saturate GPU memory bandwidth and compute units.
+At these sizes, WA+Prof achieves 24.6$\times$ median, compared to 10.8$\times$ for NA and 20.7$\times$ for the agent, because compiler analysis identifies the correct parallelization strategy upfront.
 Top kernels: \texttt{3mm} (2041$\times$), \texttt{2mm} (2004$\times$), \texttt{gemm} (451$\times$).
 
 \subsection{Profiling-Guided Optimization}
